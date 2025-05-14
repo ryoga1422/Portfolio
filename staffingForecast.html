@@ -1,0 +1,304 @@
+<pre>
+private void btnCalculate_Click(object sender, EventArgs e)
+{
+    DataTable dt = new DataTable();
+    string pattern = "yyyy-MM-dd";
+
+    if (rdbHistory.Checked == true)
+    {
+        DateTime lastYearsDate = Utilities.getLastDay(dtpForecastDate.Value.AddYears(-1), dtpForecastDate.Value.DayOfWeek);
+        DateTime prevWeek = Utilities.getLastDay(lastYearsDate.AddDays(-1), dtpForecastDate.Value.DayOfWeek);
+        DateTime Nextweek = Utilities.getNextDay(lastYearsDate.AddDays(1), dtpForecastDate.Value.DayOfWeek);
+
+        string strQuery = "SELECT time(datetimestart) as timeStart, time(datetimeend) as timeEnd, sum(totalInbound)/3 as Calls " +
+                          "FROM TPS.inboundDistributionArchive " +
+                          "WHERE reportID = @reportID " +
+                          "AND DATE_FORMAT(datetimestart, '%Y-%m-%d') IN (@prevWeek, @nextWeek, @lastYearsDate) " +
+                          "GROUP BY time(datetimestart), time(datetimeend) " +
+                          "ORDER BY time(datetimestart), time(datetimeend)";
+
+        yearlys.Clear();
+        lvResults.Clear();
+        lvResults.Columns.Clear();
+        lvResults.Columns.Add("Start Time", 75);
+        lvResults.Columns.Add("End Time", 75);
+        lvResults.Columns.Add("Calls", 75, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Agents", 75, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Agent Engagement", 120, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Calls Waiting", 100, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Average Speed of Answer", 150, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Service Level", 100, HorizontalAlignment.Right);
+
+        try
+        {
+            using (DbCommand cmd = Database.CreateCommand(strQuery))
+            {
+                // Add parameters
+                DbParameter reportIDParam = cmd.CreateParameter();
+                reportIDParam.ParameterName = "@reportID";
+                reportIDParam.Value = lstBoxReportName.SelectedValue;
+                cmd.Parameters.Add(reportIDParam);
+
+                DbParameter prevWeekParam = cmd.CreateParameter();
+                prevWeekParam.ParameterName = "@prevWeek";
+                prevWeekParam.Value = prevWeek.ToString(pattern);
+                cmd.Parameters.Add(prevWeekParam);
+
+                DbParameter nextWeekParam = cmd.CreateParameter();
+                nextWeekParam.ParameterName = "@nextWeek";
+                nextWeekParam.Value = Nextweek.ToString(pattern);
+                cmd.Parameters.Add(nextWeekParam);
+
+                DbParameter lastYearsDateParam = cmd.CreateParameter();
+                lastYearsDateParam.ParameterName = "@lastYearsDate";
+                lastYearsDateParam.Value = lastYearsDate.ToString(pattern);
+                cmd.Parameters.Add(lastYearsDateParam);
+
+                dt = Database.ExecuteDataTable(cmd);
+
+                if (dt.Rows.Count > 0)
+                {
+                    int interval = 1800;
+
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        YearlyForecast y = new YearlyForecast();
+                        double dbCalls = Math.Round(Convert.ToDouble(dr["Calls"]) * Convert.ToDouble(txtMultiplier.Text), 2);
+                        double trafficIntensity = ((dbCalls * Convert.ToDouble(txtAnsPer.Text)) / interval) * Convert.ToInt32(txtCallDur.Text);
+                        double numAgents = trafficIntensity / Convert.ToDouble(txtEngage.Text);
+
+                        if ((numAgents < 1) && (numAgents > 0))
+                        {
+                            numAgents = 1;
+                        }
+                        if (Math.Truncate(numAgents) != numAgents)
+                        {
+                            if ((numAgents - Math.Truncate(numAgents)) > .2)
+                            {
+                                numAgents = Math.Truncate(numAgents) + 1;
+                            }
+                            else
+                            {
+                                numAgents = Math.Truncate(numAgents);
+                            }
+                        }
+
+                        ErlangC myC = new ErlangC();
+                        myC.CallDuration = Convert.ToDouble(txtCallDur.Text);
+                        myC.AnswerTime = Convert.ToDouble(txtAnsTime.Text);
+                        myC.CallsPerInterval = Convert.ToDouble(dbCalls);
+                        myC.IntervalSeconds = interval;
+                        myC.NumOfAgents = Convert.ToInt32(Math.Round(numAgents));
+
+                        ListViewItem itm = new ListViewItem(new string[] { dr["timeStart"].ToString(), dr["timeEnd"].ToString(), Math.Round(dbCalls).ToString(), Math.Round(numAgents, 1).ToString(), String.Format("{0:0.00}", myC.AgentOccupancy() * 100) + "%", String.Format("{0:0.00}", (myC.ErlangCFormula() * 100)) + "%", String.Format("{0:0.00}", myC.SpeedofAnswer()), String.Format("{0:0.00}", myC.TSF() * 100) + "%" });
+                        y.StartTime = dr["timeStart"].ToString();
+                        y.EndTime = dr["timeEnd"].ToString();
+                        y.Calls = Convert.ToInt32(Math.Round(dbCalls));
+                        y.Agents = Convert.ToInt32(Math.Round(numAgents, 1));
+                        y.AgentEngagement = String.Format("{0:0.00}", myC.AgentOccupancy() * 100) + "%";
+                        y.CallsWaiting = String.Format("{0:0.00}", (myC.ErlangCFormula() * 100)) + "%";
+                        y.AverageSpeedAnswer = String.Format("{0:0.00}", myC.SpeedofAnswer());
+                        y.ServiceLevel = String.Format("{0:0.00}", myC.TSF() * 100) + "%";
+                        yearlys.Add(y);
+                        lvResults.Items.Add(itm);
+                    }
+                    dgvForecastResults.DataSource = yearlys;
+                }
+                else
+                {
+                    MessageBox.Show("No records found for the selected historical period.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Error retrieving historical data: " + ex.Message);
+        }
+    }
+    else
+    {
+        DateTime dteToday = DateTime.Today;
+        DateTime startDate = dtpForecastDate.Value;
+        DayOfWeek dowValue = dtpForecastDate.Value.DayOfWeek;
+        DateTime lastDay = startDate;
+
+        while (lastDay >= dteToday)
+        {
+            lastDay = Utilities.getLastDay(lastDay.AddDays(-1), dowValue);
+        }
+
+        DateTime firstDay = lastDay.AddDays(-56);
+
+        int lastCalls = 0;
+        string strQueryLastCalls = "SELECT sum(totalInbound) as calls FROM TPS.inboundDistributionArchive " +
+                                   "WHERE reportID = @reportID AND DATE_FORMAT(datetimestart, '%Y-%m-%d') = @lastDay";
+        try
+        {
+            using (DbCommand cmd = Database.CreateCommand(strQueryLastCalls))
+            {
+                DbParameter reportIDParam = cmd.CreateParameter();
+                reportIDParam.ParameterName = "@reportID";
+                reportIDParam.Value = lstBoxReportName.SelectedValue;
+                cmd.Parameters.Add(reportIDParam);
+
+                DbParameter lastDayParam = cmd.CreateParameter();
+                lastDayParam.ParameterName = "@lastDay";
+                lastDayParam.Value = lastDay.ToString(pattern);
+                cmd.Parameters.Add(lastDayParam);
+
+                object result = Database.ExecuteScalar(cmd);
+                if (result != null && result != DBNull.Value)
+                {
+                    lastCalls = Convert.ToInt32(result);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"No records found for {lastDay.ToString(pattern)}. Error: {ex.Message}");
+            return; // Exit the function if there's an error
+        }
+
+        int firstCalls = 0;
+        string strQueryFirstCalls = "SELECT sum(totalInbound) as calls FROM TPS.inboundDistributionArchive " +
+                                    "WHERE reportID = @reportID AND DATE_FORMAT(datetimestart, '%Y-%m-%d') = @firstDay";
+        try
+        {
+            using (DbCommand cmd = Database.CreateCommand(strQueryFirstCalls))
+            {
+                DbParameter reportIDParam = cmd.CreateParameter();
+                reportIDParam.ParameterName = "@reportID";
+                reportIDParam.Value = lstBoxReportName.SelectedValue;
+                cmd.Parameters.Add(reportIDParam);
+
+                DbParameter firstDayParam = cmd.CreateParameter();
+                firstDayParam.ParameterName = "@firstDay";
+                firstDayParam.Value = firstDay.ToString(pattern);
+                cmd.Parameters.Add(firstDayParam);
+
+                object result = Database.ExecuteScalar(cmd);
+                if (result != null && result != DBNull.Value)
+                {
+                    firstCalls = Convert.ToInt32(result);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"No records found for {firstDay.ToString(pattern)}. Error: {ex.Message}");
+            return; // Exit the function if there's an error
+        }
+
+        double trendLine = (lastCalls - firstCalls) / 8.0;
+        double trendPercentage = (firstCalls == 0) ? 0 : (double)trendLine / firstCalls;
+
+        string strQueryTrendData = "SELECT time(datetimestart) as timeStart, time(datetimeend) as timeEnd, totalInbound as Calls " +
+                                   "FROM TPS.inboundDistributionArchive " +
+                                   "WHERE reportID = @reportID AND DATE_FORMAT(datetimestart, '%Y-%m-%d') = @lastDay " +
+                                   "GROUP BY time(datetimestart), time(datetimeend) " +
+                                   "ORDER BY time(datetimestart), time(datetimeend)";
+
+        trends.Clear();
+        lvResults.Clear();
+        lvResults.Columns.Clear();
+        lvResults.Columns.Add("Start Time", 75);
+        lvResults.Columns.Add("End Time", 75);
+        lvResults.Columns.Add("Trend Line", 75, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Calls", 75, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Agents", 75, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Agent Engagement", 150, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Calls Waiting", 100, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Average Speed of Answer", 150, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Service Level", 100, HorizontalAlignment.Right);
+        lvResults.Columns.Add("Base Call Volume", 50, HorizontalAlignment.Right);
+
+        try
+        {
+            using (DbCommand cmd = Database.CreateCommand(strQueryTrendData))
+            {
+                DbParameter reportIDParam = cmd.CreateParameter();
+                reportIDParam.ParameterName = "@reportID";
+                reportIDParam.Value = lstBoxReportName.SelectedValue;
+                cmd.Parameters.Add(reportIDParam);
+
+                DbParameter lastDayParam = cmd.CreateParameter();
+                lastDayParam.ParameterName = "@lastDay";
+                lastDayParam.Value = lastDay.ToString(pattern);
+                cmd.Parameters.Add(lastDayParam);
+
+                dt = Database.ExecuteDataTable(cmd);
+
+                if (dt.Rows.Count > 0)
+                {
+                    int interval = 1800;
+
+                    foreach (DataRow dr in dt.Rows)
+                    {
+                        TrendLineForecast y = new TrendLineForecast();
+                        double dbCalls = Convert.ToDouble(dr["Calls"]);
+                        int initCalls = Convert.ToInt32(dbCalls);
+                        DateTime workingDate = lastDay;
+
+                        while (workingDate < startDate)
+                        {
+                            if (dbCalls > 0)
+                            {
+                                dbCalls = Math.Round(dbCalls + (dbCalls * Math.Round(trendPercentage, 3)), 5);
+                            }
+                            workingDate = workingDate.AddDays(7);
+                        }
+                        dbCalls = Math.Round(dbCalls * Convert.ToDouble(txtMultiplier.Text));
+                        double trafficIntensity = ((dbCalls * Convert.ToDouble(txtAnsPer.Text)) / interval) * Convert.ToInt32(txtCallDur.Text);
+                        double numAgents = trafficIntensity / Convert.ToDouble(txtEngage.Text);
+
+                        if ((numAgents < 1) && (numAgents > 0))
+                        {
+                            numAgents = 1;
+                        }
+                        if (Math.Truncate(numAgents) != numAgents)
+                        {
+                            if ((numAgents - Math.Truncate(numAgents)) > .2)
+                            {
+                                numAgents = Math.Truncate(numAgents) + 1;
+                            }
+                            else
+                            {
+                                numAgents = Math.Truncate(numAgents);
+                            }
+                        }
+
+                        ErlangC myC = new ErlangC();
+                        myC.CallDuration = Convert.ToDouble(txtCallDur.Text);
+                        myC.AnswerTime = Convert.ToDouble(txtAnsTime.Text);
+                        myC.CallsPerInterval = Convert.ToDouble(dbCalls);
+                        myC.IntervalSeconds = interval;
+                        myC.NumOfAgents = Convert.ToInt32(Math.Round(numAgents));
+
+                        ListViewItem itm = new ListViewItem(new string[] { dr["timeStart"].ToString(), dr["timeEnd"].ToString(), String.Format("{0:0.00}", trendPercentage * 100) + "%", Math.Round(dbCalls).ToString(), Math.Round(numAgents, 1).ToString(), String.Format("{0:0.00}", myC.AgentOccupancy() * 100) + "%", String.Format("{0:0.00}", (myC.ErlangCFormula() * 100)) + "%", String.Format("{0:0.00}", myC.SpeedofAnswer()), String.Format("{0:0.00}", myC.TSF() * 100) + "%", initCalls.ToString() });
+                        y.StartTime = dr["timeStart"].ToString();
+                        y.EndTime = dr["timeEnd"].ToString();
+                        y.Calls = Convert.ToInt32(Math.Round(dbCalls));
+                        y.Agents = Convert.ToInt32(Math.Round(numAgents, 1));
+                        y.AgentEngagement = String.Format("{0:0.00}", myC.AgentOccupancy() * 100) + "%";
+                        y.CallsWaiting = String.Format("{0:0.00}", (myC.ErlangCFormula() * 100)) + "%";
+                        y.AverageSpeedAnswer = String.Format("{0:0.00}", myC.SpeedofAnswer());
+                        y.ServiceLevel = String.Format("{0:0.00}", myC.TSF() * 100) + "%";
+                        y.TrendLine = String.Format("{0:0.00}", trendPercentage * 100) + "%";
+                        trends.Add(y);
+                        lvResults.Items.Add(itm);
+                    }
+                    dgvForecastResults.DataSource = trends;
+                }
+                else
+                {
+                    MessageBox.Show($"No records found for {lastDay.ToString(pattern)} for trend calculation.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Error retrieving trend data: " + ex.Message);
+        }
+    }
+}
+</pre>

@@ -1,0 +1,409 @@
+
+<pre>
+#!/usr/bin/perl<br>
+use strict;<br>
+use warnings;<br>
+use DBI;<br>
+use MIME::Lite;<br>
+use Date::Calc qw(Delta_Days Now Today Today_and_Now Delta_DHMS Day_of_Week);<br>
+use Class::Date qw(:errors date localdate gmdate now -DateParse -EnvC);<br>
+use Config::Tiny; # For reading the config file<br>
+use Try::Tiny;    # For better error handling<br>
+<br>
+BEGIN { $Class::Date::WARNINGS = 0; }<br>
+<br>
+# Configuration File<br>
+my $config_file = "config.ini"; # You can change the filename<br>
+my %config = load_config($config_file);<br>
+<br>
+#MIME::Lite->send('smtp', $config{smtp}{server}); # SMTP server from config<br>
+<br>
+####################################################################################################################<br>
+#  This does the calculate rates info<br>
+#<br>
+#  Here is the Order of operations for calculating rates.<br>
+#  Each step overrides any previous steps if applicable.<br>
+#<br>
+#  1. Clean up ID_Tier_Working<br>
+#   -Set ID_Tier_Working to proper value should be Previous Monday EFF_Date<br>
+#   -Reset Tier overrides as needed and fill employee record with proper tier<br>
+#   -Set Tier Rates from ID_Tier_Working (Pay Type 1)<br>
+#   -Set a default rate (from SYS_Site) if Tier = 0<br>
+#  2. Override with Pay_Override_Rate (Pay Type 1) if Pay_Override <> 0<br>
+#  3. Override with any Campaign Specific Rates (Pay Type 1) if rate <> 0<br>
+#  4. Apply Training Rates (Pay Type 1,9) All Type 9, override where hire_date >=Today()-[Training_Days] in SYS_Site<br>
+#  5. Create Admin Pay Records for week (Pay Type 10)<br>
+#   -wipe out all for week add in all for week<br>
+#   -use default admin rate for site<br>
+#   -apply override rate from emp table if needed<br>
+#  . Apply Penalty Rates (Pay Type 1,2,10)<br>
+#  . Create Salary Records (Pay Type 8) (if not already existing)<br>
+#   -Zero out hour pay for Salary Employees!!<br>
+#<br>
+###################################################################################################################<br>
+<br>
+open my $log_fh, ">>", $config{log}{file}<br>
+    or die "Could not open log file: $!"; # Log file from config<br>
+select $log_fh;<br>
+autoflush $log_fh, 1; # Flush after each write<br>
+<br>
+#First We Get or Set the process date<br>
+my $temp = $ARGV[0];<br>
+my $timeStart;<br>
+my ($year, $month, $day, $hour, $min, $sec) = Today_and_Now();<br>
+my $now = "$year-$month-$day $hour:$min:$sec";<br>
+print "****Now = $year-$month-$day $hour:$min:$sec\n";<br>
+my $today = "$year-$month-$day";  #date `date +%F`;<br>
+print "****Today = $today\n";<br>
+<br>
+#Now check the database connections<br>
+#This is the REDBULL Connetion String<br>
+#$dbmysql = DBI->connect("DBI:mysql:dnc:",'hastur','G4nd01f');<br>
+#This is the DRPEPPER Connection String<br>
+my $dbTPS = connect_to_db(<br>
+    "DBI:mysql:$config{database}{tps_name}:$config{database}{tps_host}",<br>
+    $config{database}{tps_user},<br>
+    $config{database}{tps_password},<br>
+    "TPS"<br>
+);<br>
+my $dbMojito = connect_to_db(<br>
+    "DBI:mysql:$config{database}{mojito_name}:$config{database}{mojito_host}",<br>
+    $config{database}{mojito_user},<br>
+    $config{database}{mojito_password},<br>
+    "Mojito"<br>
+);<br>
+my $dbVocalcomFC = connect_to_sybase(<br>
+    $config{database}{vocalcom_fc_dsn},<br>
+    $config{database}{vocalcom_fc_user},<br>
+    $config{database}{vocalcom_fc_password},<br>
+    "VocalcomFC"<br>
+);<br>
+my $dbVocalcomGJ = connect_to_sybase(<br>
+    $config{database}{vocalcom_gj_dsn},<br>
+    $config{database}{vocalcom_gj_user},<br>
+    $config{database}{vocalcom_gj_password},<br>
+    "VocalcomGJ"<br>
+);<br>
+<br>
+#########################################<br>
+#HERE are some constants that can be    #<br>
+#updated as needed				  #<br>
+#########################################<br>
+<br>
+########################<br>
+#Fill in Date Variables#<br>
+########################<br>
+#We need to get a $wedate and $0(Week Start Date)<br>
+my $todaysDate = "$year-$month-$day 00:00:00";<br>
+my $wedate = &date(&getWE_Date($today));<br>
+my $dstart = $wedate - '6D';<br>
+my $wedaten1 = $wedate + '1D';<br>
+<br>
+print "Week Beginning: $dstart - Week Ending: $wedate\n";<br>
+<br>
+########################################<br>
+# Touchstar Statuses<br>
+# 0  = "Not Logged In"<br>
+# 1  = "Not Ready"<br>
+# 2  = "Ready"<br>
+# 3  = "Talking"<br>
+# 4  = "Preview? "<br>
+# 5  = "Hold Time? "<br>
+# 6  = "Waiting for Call? "<br>
+# 7  = "Wrapping"<br>
+# 8  = "On Break"<br>
+# 9  = "Meal"<br>
+# 10 = "Meeting"<br>
+# 11 = "Other"<br>
+########################################<br>
+my $query;<br>
+my $squery;<br>
+my $conn;<br>
+my $i;<br>
+#Retrieve all ACTIVE agents in the system; ????that are in a Status other than "NOT LOGGED IN"<br>
+for ($i = 1; $i <= 2; $i++) {<br>
+    if ($i == 1) {  #Vocalcom FC<br>
+	   $squery = " SELECT [OriginatorID] as id_employee, [Nom] as lastname, [Prenom] as firstName, State as status, 'V' as system"<br>
+			 . " FROM [HN_Ondata].[dbo].[ODActions] a left join"<br>
+			 . " [HN_ADMIN].[dbo].[ListAgents] l on (a.OriginatorID=l.[Ident])"<br>
+			 . " where a.ID in (select max(ID) from HN_Ondata.dbo.ODActions"<br>
+			 . " group by OriginatorID) and OriginatorID < 9000"<br>
+			 . " and State != 0 and OriginatorID not in (0)" #GJ uses 1000, 1001 for the wallboards<br>
+			 . " order by [OriginatorID]";<br>
+	   print "\nProcessing VocalcomFC";<br>
+	   $dbVocalcomFC->do("use HN_Ondata");<br>
+	   $conn = $dbVocalcomFC->prepare($squery)<br>
+		  or die "Prepare failed: " . $dbVocalcomFC->errstr();<br>
+    } else {<br>
+	   $squery = " SELECT [OriginatorID] as id_employee, [Nom] as lastname, [Prenom] as firstName, State as status, 'V' as system"<br>
+			. " FROM [HN_Ondata].[dbo].[ODActions] a left join"<br>
+			. " [HN_ADMIN].[dbo].[ListAgents] l on (a.OriginatorID=l.[Ident])"<br>
+			. " where a.ID in (select max(ID) from HN_Ondata.dbo.ODActions"<br>
+			. " group by OriginatorID)"<br>
+			. " and State != 0 and OriginatorID not in (0, 1000, 1001)" #GJ uses 1000, 1001 for the wallboards<br>
+			. " order by [OriginatorID]";<br>
+	   print "\nProcessing VocalcomGJ";<br>
+	   $dbVocalcomGJ->do("use HN_Ondata");<br>
+	   $conn = $dbVocalcomGJ->prepare($squery)<br>
+		  or die "Prepare failed: " . $dbVocalcomGJ->errstr();<br>
+    }<br>
+    $conn->execute() or die "Execute failed: " . $conn->errstr();<br>
+<br>
+    ##This loops through all of the active agents<br>
+    while (my ($ID_Employee, $Lastname, $Firstname, $Status, $system) = $conn->fetchrow()) {<br>
+	   if ($Lastname && $Firstname) {<br>
+		  #die("\n a=$ID_Employee, stat=$Status, sys=$system;\nq=$squery"); #, l=$Lastname, f=$Firstname, stat=$Status, sys=$system";<br>
+		  #Get the associated employee record for each agent<br>
+		  my $TPS;<br>
+		  #Create an employeeTimeCard record if one doesn't already exist for the day<br>
+		  #(requires one for before and after lunch)<br>
+		  if ($ID_Employee && $ID_Employee > 0) {<br>
+			 print "\n empID = $ID_Employee";<br>
+			 ($year, $month, $day, $hour, $min, $sec) = Today_and_Now();<br>
+			 $now = "$year-$month-$day $hour:$min:$sec";<br>
+			 print("**** now=$now *****\n");<br>
+			 $query = qq~SELECT id, timeIn, timeOut, totalSeconds, hourlyRate, statusID FROM `$config{database}{mojito_name}`.employeeTimeCard<br>
+					   where ID_Employee = $ID_Employee and timeIn > '$todaysDate'~;<br>
+				   #. " and totalSeconds < 900";  #totalSeconds < 15 minutes<br>
+			 print "\nq=$query";<br>
+			 my $mojito = $dbMojito->prepare($query)<br>
+				or die "Prepare failed: " . $dbMojito->errstr();<br>
+			 my $result = $mojito->execute()<br>
+				or die "Execute failed: " . $mojito->errstr();<br>
+			 #Handle case where Employee already has a record<br>
+			 if ($result > 0) {<br>
+				my ($employeeTimeCardID, $timeIn, $timeOut, $totalSeconds, $hourlyRate, $statusID) = $mojito->fetchrow();<br>
+				$totalSeconds = &calcSecondsBetweenDates($timeIn, $now);<br>
+				print "\nEmployee=$Firstname $Lastname; timeIn=$timeIn; timeOut=$timeOut; totalSeconds=$totalSeconds\n";<br>
+				#If agent has a employeeTimeCard record for the day but is not loggedIn then log them out<br>
+				if (($Status == 0) && ($timeOut eq '0000-00-00 00:00:00')) {<br>
+				    $query = " UPDATE employeeTimeCard SET timeOut = '$now', totalSeconds = $totalSeconds, statusID=$Status"<br>
+						 . "  where ID_Employee = $ID_Employee and id = $employeeTimeCardID";<br>
+				    $mojito = $dbMojito->prepare($query)<br>
+					   or die "Prepare failed: " . $mojito->errstr();<br>
+				    $mojito->execute()<br>
+					   or die "Execute failed: " . $mojito->errstr();<br>
+				} elsif ($Status > 0) { #logged in ????but not on Break?????  so increment loggedIn time<br>
+				    $query = "UPDATE employeeTimeCard SET totalSeconds = $totalSeconds, timeOut = '0000-00-00 00:00:00', statusID=$Status where ID_Employee = $ID_Employee and id = $employeeTimeCardID";<br>
+				    $mojito = $dbMojito->prepare($query)<br>
+					   or die "Prepare failed: " . $mojito->errstr();<br>
+				    $mojito->execute()<br>
+					   or die "Execute failed: " . $mojito->errstr();<br>
+				    #don't believe this ever runs.  ???Write a note about logging out of system for no reason if employee did<br>
+				    if (($timeOut ne "0000-00-00 00:00:00") && ($totalSeconds > 900)) {  #totalSeconds > 15 minutes<br>
+					   my $elapsedSeconds = &calcSecondsBetweenDates($timeIn, $now);<br>
+					   my $note = "Agent $Firstname $Lastname logged out from $timeOut to $now. ElapsedSeconds=$elapsedSeconds";<br>
+					   $query = "INSERT INTO employeeTimeCardNote VALUES(0, $employeeTimeCardID, '$note', 1, '$now');";<br>
+					   $mojito = $dbMojito->prepare($query)<br>
+						  or die "Prepare failed: " . $mojito->errstr();<br>
+					   $mojito->execute()<br>
+						  or die "Execute failed: " . $mojito->errstr();<br>
+				    }<br>
+				    #Now check to see if employee just got off break<br>
+				    $query = " Select timeStart from employeeTimeCardBreak"<br>
+						 . " where employeeTimeCardID = $employeeTimeCardID and timeStart > '$todaysDate'"<br>
+						 . " and timeEnd = '0000-00-00 00:00:00'";<br>
+				    #print ("status=$statusID; query=$query\n");<br>
+				    $mojito = $dbMojito->prepare($query)<br>
+					   or die "Prepare failed: " . $mojito->errstr();<br>
+				    my $result1 = $mojito->execute()<br>
+					   or die "Execute failed: " . $mojito->errstr();<br>
+				    #If employee was on break then<br>
+				    if ($result1 > 0 && $Status != 8) {<br>
+					   my ($timeStart) = $mojito->fetchrow();<br>
+					   $totalSeconds = &calcSecondsBetweenDates($timeStart, $now);<br>
+					   $query = "Update employeeTimeCardBreak SET timeEnd='$now', totalSeconds=$totalSeconds where employeeTimeCardID = $employeeTimeCardID and timeEnd = '0000-00-00 00:00:00'";<br>
+					   print ("status=$statusID; query=$query\n");<br>
+					   $mojito = $dbMojito->prepare($query)<br>
+						  or die "Prepare failed: " . $mojito->errstr();<br>
+					   $mojito->execute()<br>
+						  or die "Execute failed: " . $mojito->errstr();<br>
+				    } elsif ($result1 == 0 && $Status == 8) {  #Create a break record if on break and no Break Record<br>
+					   $query = "INSERT INTO employeeTimeCardBreak VALUES(0, $employeeTimeCardID, '$now', '0000-00-00 00:00:00', 0, $Status, '$now');";<br>
+					   print ("status=$statusID; query=$query\n");<br>
+					   $mojito = $dbMojito->prepare($query)<br>
+						  or die "Prepare failed: " . $mojito->errstr();<br>
+					   $mojito->execute()<br>
+						  or die "Execute failed: " . $mojito->errstr();<br>
+				    } elsif ($result1 > 0 && $Status == 8) {<br>
+					   my ($timeStart) = $mojito->fetchrow();<br>
+					   $totalSeconds = &calcSecondsBetweenDates($timeStart, $now);<br>
+					   $query = "Update employeeTimeCardBreak SET totalSeconds=$totalSeconds, lastUpdate='$now' where employeeTimeCardID = $employeeTimeCardID and timeEnd = '0000-00-00 00:00:00'";<br>
+					   print ("status=$statusID; query=$query\n");<br>
+					   $mojito = $dbMojito->prepare($query)<br>
+						  or die "Prepare failed: " . $mojito->errstr();<br>
+					   $mojito->execute()<br>
+						  or die "Execute failed: " . $mojito->errstr();<br>
+				    }<br>
+<br>
+				}<br>
+			 #Finally if no employeeTimeCard exists then create it<br>
+			 } elsif ($result == 0 && $Status > 0) {<br>
+				($year, $month, $day, $hour, $min, $sec) = Today_and_Now();<br>
+				$now = "$year-$month-$day $hour:$min:$sec";<br>
+				$query = "INSERT INTO employeeTimeCard VALUES(0, $ID_Employee, '$now', '0000-00-00 00:00:00', 0, 0, $Status)";<br>
+				print "\nq=$query";<br>
+				$mojito = $dbMojito->prepare($query)<br>
+				    or die "Prepare failed: " . $mojito->errstr();<br>
+				$result = $mojito->execute()<br>
+				    or die "Execute failed: " . $mojito->errstr();<br>
+				$query = "SELECT LAST_INSERT_ID()";<br>
+				$mojito = $dbMojito->prepare($query)<br>
+				    or die "Prepare failed: " . $mojito->errstr();<br>
+				$mojito->execute()<br>
+				    or die "Execute failed: " . $mojito->errstr();<br>
+				my ($employeeTimeCardID) = $mojito->fetchrow();<br>
+				my $dayOfWeek = Day_of_Week($year, $month, $day);<br>
+				#Create schedule break records based on schedule for the day<br>
+				$query = " SELECT B_HRS, description, E_HRS, ID_Gerbil FROM `$config{database}{tps_name}`.`Emp_Schedule` s"<br>
+				   . " left join `$config{database}{tps_name}`.`Emp_Sched_Gerbil` g on (s.id_sched_gerbil = g.id_sched_gerbil)". " left join `TPS`.`Emp_Sched_Goals` e on (s.ID_Sched_Goal = e.ID_Sched_Goal)"<br>
+				   . " where ID_Employee = $ID_Employee"<br>
+				   . " and WEDate = '$wedate'"<br>
+				   . " and weekday = $dayOfWeek"<br>
+				   . " order by B_HRS";<br>
+				$TPS = $dbTPS->prepare($query);<br>
+				my $rows_returned = $TPS->execute();<br>
+				print "\nq=$query";<br>
+				my $i = 0;<br>
+				my $startHour = 0;<br>
+				my $endHour = 0;<br>
+				my $id_gerbil_prev = 0;<br>
+				my ($bHrs, $campaign, $eHrs, $id_gerbil);<br>
+				#Now need to id the break points<br>
+				while ( ($bHrs, $campaign, $eHrs, $id_gerbil) = $TPS->fetchrow()) {<br>
+				    if ($i == 0) {<br>
+					   $startHour = substr $bHrs, 0, 2;<br>
+					   #$campaign = $rows['AgentScheduleClass'][$i]['Description'];<br>
+					   #$schedule = array_merge($schedule, array("scheduledStart" => "$bHrs", "campaign" => "$campaign"));<br>
+				    } elsif ($i == ($rows_returned-1)) {<br>
+					   #$eHrs = $rows['AgentScheduleClass'][$i]['E_HRS'];<br>
+					   #$schedule = array_merge($schedule, array("scheduledEnd" => "$eHrs"));<br>
+				    } elsif (($id_gerbil_prev+2) <= $id_gerbil) {<br>
+					   #So if a gap here if the count of hours is >= 4 insert a break<br>
+<br>
+					   if ($i > 3) {<br>
+						  ($year, $month, $day, $hour, $min, $sec) = Today_and_Now();<br>
+						  $min = 0;<br>
+						  $now = "$year-$month-$day $hour:$min:$sec";<br>
+						  print("\ny=$year, mon=$month, d=$day, h=$hour, m=$min, s=$sec");<br>
+<br>
+						  $endHour = substr $eHrs, 0, 2;<br>
+						  $hour = ($endHour-$startHour)/2;<br>
+						  $min = 0;<br>
+						  my $scheduledBreakStart = "$year-$month-$day $hour:$min:00";<br>
+						  $min = $min + 10;<br>
+						  my $scheduledBreakEnd = "$year-$month-$day $hour:$min:00";<br>
+						  #insert a break  id, ID_Employee, createDate, employeeTimeCardID, scheduledBreakStart, scheduledBreakEnd, campaign<br>
+						  $query = "INSERT INTO `mojito_press-one`.scheduledBreak VALUES(0, $ID_Employee, '$now', $employeeTimeCardID, '$scheduledBreakStart', '$scheduledBreakEnd', '$campaign');";<br>
+						  #print "\n$query";<br>
+						  $mojito = $dbMojito->prepare($query);<br>
+						  $mojito->execute();<br>
+						  $i = 0;  #Need to reset this for next shift/gerbil<br>
+					   }<br>
+					   #$eHrs = $rows['AgentScheduleClass'][$i]['E_HRS'];<br>
+					   #$schedule = array_merge($schedule, array("lunchStart" => "$bHrs", "lunchEnd" => "$eHrs"));<br>
+				    }<br>
+				    $id_gerbil_prev = $id_gerbil;<br>
+				    $i++;<br>
+				}<br>
+<br>
+				#Probably need to add this back!!!!!!<br>
+				#if ($i > 3) {<br>
+				#    ($year, $month, $day, $hour, $min, $sec) = Today_and_Now();<br>
+				#    $min = 0;<br>
+				#    $now = "$year-$month-$day $hour:$min:$sec";<br>
+				#    die("\nehrs = $eHrs");<br>
+				#    $endHour = substr $eHrs, 0, 2;<br>
+				#    $hour = ($endHour-$startHour)/2;<br>
+				#    $min = 0;<br>
+				#    my $scheduledBreakStart = "$year-$month-$day $hour:$min:00";<br>
+				#    $min = $min + 10;<br>
+				#    my $scheduledBreakEnd = "$year-$month-$day $hour:$min:00";<br>
+				    #insert a break  id, ID_Employee, createDate, employeeTimeCardID, scheduledBreakStart, scheduledBreakEnd, campaign<br>
+				#    $query = "INSERT INTO `mojito_press-one`.ScheduledBreak VALUES(0, $ID_Employee, '$now', $employeeTimeCardID, '$scheduledBreakStart', '$scheduledBreakEnd', $campaign);";<br>
+				#    print $query;<br>
+				#    $mojito = $dbMojito->prepare($query);<br>
+				#    $mojito->execute();<br>
+				#    $i = 0;  #Need to reset this for next shift/gerbil<br>
+				#}<br>
+			 }<br>
+		  }<br>
+	   } #end if<br>
+    } #end-while<br>
+<br>
+<br>
+    ##########<br>
+    #Clean up#<br>
+    ##########<br>
+    print "\nProcess Complete";<br>
+    if(defined($conn)){<br>
+	    $conn->finish();<br>
+    }<br>
+<br>
+	}<br>
+	if(defined($dbTPS)){<br>
+		$dbTPS->disconnect();<br>
+	}<br>
+	if(defined($dbMojito)){<br>
+		$dbMojito->disconnect();<br>
+	}<br>
+<br>
+	if(defined($dbVocalcomFC)){<br>
+		$dbVocalcomFC->disconnect();<br>
+	}<br>
+	if(defined($dbVocalcomGJ)){<br>
+		$dbVocalcomGJ->disconnect();<br>
+	}<br>
+	close LOG;<br>
+	select STDOUT;<br>
+	print "\nFinished\n";<br>
+<br>
+	#quit;<br>
+<br>
+	sub calcSecondsBetweenDates{<br>
+		my $startTime = date("$_[0]");<br>
+		my $endTime = date("$_[1]");<br>
+		my ($D_d, $Dh, $Dm, $Ds) = Delta_DHMS($startTime->year, $startTime->month, $startTime->day, $startTime->hour, $startTime->min, $startTime->sec, $endTime->year, $endTime->month, $endTime->day, $endTime->hour, $endTime->min, $endTime->sec);<br>
+		my $totalSeconds;<br>
+		$totalSeconds = $Ds + ($Dm*60) + ($Dh*3600) + ($D_d * 24 * 3600) ;<br>
+		#print "startTime = $startTime; endTime=$endTime; secondsElapsed=$totalSeconds\n";<br>
+		return $totalSeconds;<br>
+	}<br>
+<br>
+	sub getWE_Date{<br>
+		my $dte = $_[0];<br>
+		my $workingdte = date("$dte");<br>
+		my $newdate = $workingdte;<br>
+		my $i =1;<br>
+		while($newdate->wday != 1){<br>
+			$newdate = $workingdte+[0,0,$i];<br>
+			$i++;<br>
+		}	<br>
+		$workingdte = $newdate+[0,0,0];<br>
+		return $workingdte->year . "-" . $workingdte->mon . "-" . $workingdte->day;<br>
+	}<br>
+<br>
+	sub getWeekStart_Date{<br>
+		my $dte = $_[0];<br>
+		my $workingdte = date("$dte");<br>
+		my $newdate = $workingdte;<br>
+		my $i =1;<br>
+		while($newdate->wday != 1){<br>
+			$newdate = $workingdte+[0,0,$i];<br>
+			$i++;<br>
+		}	<br>
+		$workingdte = $newdate+[0,0,0];<br>
+		return $workingdte->year . "-" . $workingdte->mon . "-" . $workingdte->day;<br>
+	}<br>
+<br>
+	sub padLeft{<br>
+		my $str = $_[0];<br>
+		my $padChar = $_[1];<br>
+		my $padLength = $_[2];<br>
+		while (length($str) < $padLength) {<br>
+			$str = "$padChar$str";<br>
+			print "string = $str\n";<br>
+		}<br>
+	}<br>
+}<br>
+</pre>

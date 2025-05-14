@@ -1,0 +1,928 @@
+<pre>
+public class DtiParser:IDtiParser
+{
+    #region Members
+    private string logFile;
+    #endregion
+    #region methods
+    private void setLogFile(string LogPath)
+    {
+        DateTime mydate;
+        mydate = DateTime.Now;
+        string strDate = mydate.Month.ToString() + mydate.Day.ToString() + mydate.Year.ToString();
+        if (LogPath != null)
+        {
+            logFile = LogPath + @"\dllLog" + strDate + ".txt";
+        }
+        else
+        {
+            LogPath = @"C:\Logs\Other";
+            logFile = @"C:\Logs\Other\dllLog" + strDate + ".txt";
+        }
+        if (!System.IO.Directory.Exists(LogPath))
+        {
+            System.IO.Directory.CreateDirectory(LogPath);
+        }
+    }
+    private string getURL(string url)
+    {
+        //create web client
+        DateTime mystart = DateTime.Now;
+        DateTime myend;
+        //WebRequest mywr = WebRequest.Create(url);// assign url
+        HttpWebRequest mywr = (HttpWebRequest)HttpWebRequest.Create(url);
+        mywr.Proxy = null;
+        mywr.ServicePoint.ConnectionLimit = 500;
+        mywr.MaximumAutomaticRedirections = 4;
+        mywr.MaximumResponseHeadersLength = 4;
+        
+        int myTimeout = 15000;
+        mywr.Timeout = myTimeout; //Time out in miliseconds
+        mywr.Method = "get";
+        WebResponse wr = null;
+        //logIt("This is the url request" + url);
+        string returnedString = null;
+        try
+        {
+            //get uri
+            wr = mywr.GetResponse();
+            StreamReader sr = new StreamReader(wr.GetResponseStream());
+            returnedString = sr.ReadToEnd();
+            wr.Close();
+            sr.Close();
+
+        }
+        catch (WebException ex)
+        {
+            wr = null;
+            mywr = null;
+            if (ex.Status == WebExceptionStatus.Timeout)
+            {
+                myend = DateTime.Now;
+                logIt("TimedOut! Timeout set to " + myTimeout.ToString() + " " + (myend-mystart).TotalMilliseconds.ToString() +  " Miliseconds Elasped");
+                return "Error=999";
+            }
+            else
+            {
+                myend = DateTime.Now;
+                logIt(ex.Message + " " + url + " " + (myend - mystart).TotalMilliseconds.ToString() + " Miliseconds Elasped");
+                return "Error=992"; //web status error write actual error to log
+
+            }
+        }
+        myend = DateTime.Now;
+        logIt("Success " + url + " " + (myend - mystart).TotalMilliseconds.ToString() + " Miliseconds Elasped");
+        if (returnedString != null)
+        {
+            wr = null;
+            mywr = null;
+            //logIt(returnedString);
+            return returnedString;
+        }
+        else
+        {
+            wr = null;
+            mywr = null;
+            return null;
+        }
+    }
+    private string getParam(string strParams, string strTag)
+    {
+        //strParams = strParams.ToUpper();
+        //strTag = strTag.ToUpper();
+        int tagLen = strTag.Length;
+        int intStart = strParams.IndexOf(strTag);
+        //if (intStart == -1) throw new Exception("Missing argument ==> " + strTag);
+        if (intStart == -1)
+        {
+            return null;
+        }
+        int endTag = intStart + tagLen;
+        int endValue = strParams.Substring(endTag).IndexOf("&");
+        string value = strParams.Substring(endTag + 1, endValue - 1);
+        if (value.Length > 0)
+        {
+            return value;
+        }
+        else
+        {
+            return null;
+        }
+    }
+    private string returnXML(string xmlValues, string strTag)
+    {
+        string pattern = @"<" + strTag + @">(.*)</" + strTag + ">";
+        //string match = null;
+        Regex rgx = new Regex(pattern, RegexOptions.IgnoreCase);
+        Match match = rgx.Match(xmlValues);
+        if (match.Success)
+        {
+            return match.Groups[1].Value;
+        }
+        else
+        {
+            return null;
+        }
+
+
+    }
+    private void logIt(string errMsg)
+    {
+        DateTime myDate = DateTime.Now;
+
+        string logLine = myDate.ToShortDateString() + " " + myDate.ToShortDateString() + " " + myDate.ToLongTimeString() + " " + errMsg + "\r\n";
+        //StreamWriter w =System.IO.File.AppendText(logFile);
+        //w.WriteLine(logLine);
+        //System.IO.Directory.Exists( 
+        System.IO.File.AppendAllText(logFile, logLine);
+
+    }
+    public string dtiLogin(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string phoneNum = getParam(strParams, "phonenum");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string houseNum = getParam(strParams, "houseNum");
+        string path = getParam(strParams, "logpath");
+        setLogFile(path);
+
+        string url = baseUrl + "login.html?";
+        
+        logIt("New dtilogin start ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice);
+        if ((phoneNum.Length == 11)&& (phoneNum.Substring(0,1)=="1"))
+        {
+            phoneNum = phoneNum.Substring(1, 10);
+        }
+        if (phoneNum.Length == 10)//we have a phone num
+        {
+            logIt("dtilogin Phonenumber found ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice);
+            url = url + "phonenumber=" + phoneNum;
+        }
+        else
+        {
+            logIt("dtilogin Accountnumber found ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice);
+            url = url + "AccountNumber=" + phoneNum;//we have an account number
+        }
+        url = url + "&HouseNumber=" + houseNum;
+        string result = getURL(url);
+        if (result == null)
+        {
+            logIt("dtilogin Unknown Error ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=991&stateinfo=&aptNum=&housenum=&";
+        }
+        else if (result.Substring(0, 9) == "Error=992")
+        {
+            logIt("dtilogin Web Protocol Error ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&stateinfo=&aptNum=&housenum=&";
+        }
+        else if (result.Substring(0, 9) == "Error=999")
+        {
+            logIt("dtilogin Timeout ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&stateinfo=&aptNum=&housenum=&";
+        }
+        //Successful webpage read
+        string returnStatus = returnXML(result, "ReturnStatus");
+        string errorCode = returnXML(result, "ErrorCode");
+        string errorMsg = returnXML(result, "ErrorMsg");
+        if (returnStatus == "Completed")
+        {
+            //Success, parse stateinfo
+            string stateInfo = returnXML(result, "StateInfo");
+            logIt("dtilogin Webspeed Success" + errorCode + " StateInfo = " + stateInfo + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice);
+            //get house num and apt num
+            string callerHouseNumber = returnXML(result, "CallerHouseNumber");
+            callerHouseNumber = callerHouseNumber.Trim();
+            string apartmentNumber = returnXML(result, "ApartmentNumber");
+            string multipleSubs = returnXML(result, "MultipleSubAccount");
+            if (apartmentNumber == null)
+            {
+                apartmentNumber = "0NULL0";
+            }
+            apartmentNumber.Trim();
+            errorCode = "0";
+            return "?ErrorCode=" + errorCode + "&stateinfo=" + stateInfo + "&aptNum=" + apartmentNumber + "&housenum=" + callerHouseNumber + "&multiSub=" + multipleSubs + "&";
+        }
+        else
+        { //Failed with webspeed error
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " phonenum = " + phoneNum + "Housenum = " + houseNum + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&stateinfo=0NULL0&aptNum=0NULL0&housenum=0NULL0&";
+        }
+
+
+    }
+    public string getLastpmt(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string spubCode = getParam(strParams, "pubCode");
+        string path = getParam(strParams, "logpath");
+        string url = baseUrl + @"lastpmt.html?StateInfo=" + stateInfo;
+        setLogFile(path);
+
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            logIt("Got lastpmt.html ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            //Successful return
+            //find valid pubcode
+            //Cycle through 1-6
+            string accountNum = null;
+            string tvoAccountNum = null;
+            string pubCode = null;
+            string endPubCode = null;
+            string experationDate = null;
+            string lastPaymentDate = null;
+            string lastBillDate = null;
+            string lastPaymentAmt = null;
+            string deliverSchedule = null;
+            string nextRestart = null;
+            string status = null;
+            string DeliveryEntity = null;
+            for (int i = 1; i < 7; i++)
+            {
+                string tagName = "PubCode" + i.ToString();
+                pubCode = returnXML(results, tagName);
+                //endPubCode = pubCode;
+                if (pubCode == spubCode)
+                {
+                    tagName = "AccountNumber" + i.ToString();
+                    accountNum = returnXML(results, tagName);
+                    tagName = "ExpirationDate" + i.ToString();
+                    experationDate = returnXML(results, tagName);
+                    tagName = "LastPaymentDate" + i.ToString();
+                    lastPaymentDate = returnXML(results, tagName);
+                    tagName = "LastBillDate" + i.ToString();
+                    lastBillDate = returnXML(results, tagName);
+                    tagName = "LastPaymentAmt" + i.ToString();
+                    lastPaymentAmt = returnXML(results, tagName);
+                    tagName = "DeliveryScheduleID" + i.ToString();
+                    deliverSchedule = returnXML(results, tagName);
+                    tagName = "Status" + i.ToString();
+                    status = returnXML(results, tagName);
+                    tagName = "DeliveryEntity" + i.ToString();
+                    DeliveryEntity = returnXML(results, tagName);
+                    endPubCode = pubCode;
+                }
+                 
+                    
+            }
+            if (deliverSchedule != null)
+            {
+                nextRestart = findNextRestart(deliverSchedule);
+            }
+            if (accountNum != null)
+            {
+                //Found account number
+                if (tvoAccountNum == null)
+                {
+                    tvoAccountNum = "0NULL0";
+                }
+                if (experationDate == null)
+                {
+                    experationDate = "0NULL0";
+                }
+                if (lastPaymentAmt == null)
+                {
+                    lastPaymentAmt = "0NULL0";
+                }
+                if (lastPaymentDate == null)
+                {
+                    lastPaymentDate = "0NULL0";
+
+                }
+                if (lastBillDate == null)
+                {
+                    lastBillDate = "0NULL0";
+                }
+                if (status == null)
+                {
+                    status = "0NULL0";
+                }
+                logIt("Account Found lastpmt.html ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " pubCode=" + endPubCode + " account=" + accountNum);
+                string errorCode = "0";
+                lastPaymentAmt = lastPaymentAmt.Trim();
+                string returnString = "?ErrorCode=" + errorCode + "&acctNum=" + accountNum + "&tvoAcctNum=" + tvoAccountNum + "&stateInfo=" + stateInfo + "&pubcode=" + endPubCode + "&expdate=" + experationDate + "&lastpaydate=" + lastPaymentDate + "&lastbilldate=" + lastBillDate + "&lastpmtamt=" + lastPaymentAmt + "&nextRestart=" + nextRestart + "&deliverSchedule=" + deliverSchedule + "&status=" + status + "&DeliveryEntity=" + DeliveryEntity + "&";
+                return returnString;
+            }
+            else
+            {
+                logIt("No valid accounts lastpmt.html ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+                return "?ErrorCode=135&stateinfo=&aptNum=&housenum=&";
+            }
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("lastpmt.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&stateinfo=&aptNum=&housenum=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("lastpmt.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&stateinfo=&aptNum=&housenum=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&stateinfo=&aptNum=&housenum=&";
+        }
+
+    }
+    private string findNextRestart(string deliverSchedule)
+    {
+        string dateTimePattern = "MM/dd/yyyy";
+        DateTime aDate = DateTime.Now;
+        aDate = aDate.AddDays(1);
+        deliverSchedule = deliverSchedule.ToUpper();
+        switch (deliverSchedule)
+        {
+            case "WEFRSASU":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Friday) && (aDate.DayOfWeek != DayOfWeek.Saturday) && (aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "WESU":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+                break;
+            case "WEFRSA":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Friday) && (aDate.DayOfWeek != DayOfWeek.Saturday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "WEFR":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Friday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "SU":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "2DAY":
+
+                while ( (aDate.DayOfWeek != DayOfWeek.Friday) && (aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "SUNONLY":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "3DAY":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Friday) && (aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "SW":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+            case "WF":
+
+                while ((aDate.DayOfWeek != DayOfWeek.Wednesday) && (aDate.DayOfWeek != DayOfWeek.Sunday))
+                {
+                    aDate = aDate.AddDays(1);
+                }
+
+                break;
+
+
+        }
+        return aDate.ToString(dateTimePattern);
+    }
+    public string servErrInfo(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string url = baseUrl + @"serverrinfo.html?StateInfo=" + stateInfo;
+        string path = getParam(strParams, "logpath");
+        setLogFile(path);
+        logIt("serverrinfo.html " + url);
+
+        string results = getURL(url);
+        logIt("serverrinfo.html return " + results);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        string lastIncidentDate = returnXML(results, "LatestIncidentDate1");
+        string allowComplaints = returnXML(results, "AllowComplaintFlag1");
+        string complaintToday = returnXML(results, "ExistingComplaint1");
+       
+        if (returnStatus == "Completed")
+        {
+
+            return "?serverrinfo=0&lastComplaintDate=" + lastIncidentDate + "&allowComplaints=" + allowComplaints + "&complaintToday=" + complaintToday + "&";
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("serverrinfo.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?serverrinfo=992&lastComplaintDate=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("serverrinfo.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?serverrinfo=999&lastComplaintDate=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("serverrinfo Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?serverrinfo=" + errorCode + "&lastComplaintDate=&" + lastIncidentDate + "&";
+        }
+    }
+    public string renewInfo(string strParams)
+    {
+        //Get renewal information for payments
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string accountNum = getParam(strParams, "accountNum");
+        string renewType = getParam(strParams, "renewtype");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string path = getParam(strParams, "logpath");
+        string url;
+        string vaultType = getParam(strParams, "vaultType");
+        if ((vaultType == null) || (vaultType.Length == 0))
+        {
+            vaultType = "Hosted Page:Edgil";
+        }
+        vaultType = vaultType.Replace("_", " ");
+        url = baseUrl + @"renewinfo.html?StateInfo=" + stateInfo + "&offsitestoragelist=" + vaultType;
+        
+        setLogFile(path);
+        logIt("Start renewal info " + url + " Params:" + strParams);
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            //Success process create new url
+            url = baseUrl + @"payinfo.html?StateInfo=" + stateInfo + "&AccountNumber=" + accountNum + "&renewtype=" + renewType;
+            results = getURL(url);
+            returnStatus = returnXML(results, "ReturnStatus");
+            logIt("Fetch renewal terms " + url + " ReturnStatus=" + returnStatus);
+            if (returnStatus == "Completed")
+            {
+                //Success grab renewal values
+                string[] renewalPaymentTotal = new string[4];
+                string[] renewalLength = new string[4];
+                string[] renewalDate = new string[4];
+                string[] renewalTerm = new string[4];
+                for (int i = 0; i < 4; i++)
+                {
+                    //cycle through 4 payment terms
+                    int tagnum = i + 1;
+                    string tag = "RenewalTotalCost" + tagnum.ToString();
+                    renewalPaymentTotal[i] = returnXML(results, tag);
+                    tag = "RenewalLength" + tagnum;
+                    renewalLength[i] = returnXML(results, tag);
+                    tag = "RenewalTerm" + tagnum;
+                    renewalTerm[i] = returnXML(results, tag);
+                    tag = "NewRenewalDate" + tagnum;
+                    renewalDate[i] = returnXML(results, tag);
+                }
+                string returnString = null;
+                for (int i = 0; i < 4; i++)
+                {
+                    //Build return string
+                    int tagnum = i + 1;
+                    if (renewalPaymentTotal[i] != null)
+                    {
+                        returnString = returnString + "&renewalPaymentTotal" + tagnum.ToString() + "=" + renewalPaymentTotal[i].Trim();
+                        returnString = returnString + "&renewalLength" + tagnum.ToString() + "=" + renewalLength[i];
+                        returnString = returnString + "&newRenewalDate" + tagnum.ToString() + "=" + renewalDate[i];
+                        returnString = returnString + "&renewalTerm" + tagnum.ToString() + "=" + renewalTerm[i];
+                    }
+                    else
+                    {
+                        returnString = returnString + "&renewalPaymentTotal" + tagnum.ToString() + "=0NULL0";
+                        returnString = returnString + "&renewalLength" + tagnum.ToString() + "=0NULL0";
+                        returnString = returnString + "&newRenewalDate" + tagnum.ToString() + "=0NULL0";
+                        returnString = returnString + "&renewalTerm" + tagnum.ToString() + "=0NULL0";
+                    }
+                }
+                if (returnString != null)
+                {
+                    logIt("Return Renew Info" + returnString);
+                    return "?errorCode=0" + returnString + "&";
+                }
+                else
+                {
+                    logIt("No renewals found!");
+                    return "?errorCode=990";
+                }
+            }
+            else if (results.Substring(0, 9) == "Error=992")
+            {
+                logIt("payinfo.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+                return "?ErrorCode=992&lastComplaintDate=&";
+            }
+            else if (results.Substring(0, 9) == "Error=999")
+            {
+                logIt("payinfo.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+                return "?ErrorCode=999&lastComplaintDate=&";
+            }
+            else
+            { //Failed with webspeed error
+                string errorCode = returnXML(results, "ErrorCode");
+                string errorMsg = returnXML(results, "ErrorMsg");
+                logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+                return "?ErrorCode=" + errorCode + "&lastComplaintDate=&";
+            }
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("renewinfo.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&lastComplaintDate=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("renewinfo.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&lastComplaintDate=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&lastComplaintDate=&";
+        }
+    }
+    public string payTranCC(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string accountNum = getParam(strParams, "accountNum");
+        string creditCardType = null;
+        string creditCardNum = getParam(strParams, "ccNum");
+        string ccSec = getParam(strParams, "ccSec");
+        string ccExp = getParam(strParams, "ExpDate");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string vaultURL = getParam(strParams, "VaultURL");
+        string billingZip = getParam(strParams, "BillingZip");
+        string renewalLength = getParam(strParams, "renewalLength");
+        string renewalTerm = getParam(strParams, "renewalTerm");
+        string renewalTotal = getParam(strParams, "renewalTotal");
+        string vaultID = getParam(strParams, "Token");
+        string path = getParam(strParams, "logpath");
+        string vcConnString = string.Format("Data Source={0};Server={1};Initial Catalog={2};User ID={3};Password={4};",
+        ConfigurationManager.AppSettings["DataSource"],
+        ConfigurationManager.AppSettings["Server"],
+        ConfigurationManager.AppSettings["InitialCatalog"],
+        ConfigurationManager.AppSettings["UserID"],
+        ConfigurationManager.AppSettings["Password"]); 
+        setLogFile(path);
+        string newExpDate = ccExp.Substring(0, 2) + "/" + ccExp.Substring(2, 2);
+        
+
+        //string vaultID = returnXML(results, "vaultid");
+        creditCardType = getCCType(creditCardNum);
+        //Test ccnum to make sure it is greater than4 char
+        if (creditCardNum.Length >= 4)
+        {
+            creditCardNum = "************" + creditCardNum.Substring(Math.Max(0, creditCardNum.Length - 4));
+        }
+        else
+        {
+            //Code should never ever get here, but just in case
+            creditCardNum = "************" + creditCardNum;
+        }
+
+        string url = baseUrl + "paytran.html?StateInfo=" + stateInfo + "&OffsiteVaultID=" + vaultID + "&CreditCardType=" + creditCardType + "&CreditCardNumber=" + creditCardNum + "&ExpirationDate=" + newExpDate + "&DonationAmount=0&TipAmount=0&RenewalLength=" + renewalLength + "&RenewalTerm=" + renewalTerm + "&TotalAmount=" + renewalTotal;
+        logIt("Try transaction paytran.html" + url);
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            //Successful Transaction
+            logIt("Successful paytran " + results);
+            //Insert into long running transaction table
+            using (SqlConnection conn = new SqlConnection(vcConnString))
+            {
+                try
+                {
+                    string sql = "insert into [Inbound].[dbo].[ivr_longTransactions] ([stateinfo],[ANI],[status]) values(@stateInfo, @ANI, 1);";
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        
+                        cmd.Parameters.Add("@stateInfo", SqlDbType.VarChar, 50).Value = stateInfo; // Adjust type/size as needed!
+                        cmd.Parameters.Add("@ANI", SqlDbType.VarChar, 50).Value = ANI; //  And here!
+
+                        conn.Open();
+                        cmd.ExecuteNonQuery(); 
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logIt(ex.Message);
+                    return "?errorcode=0&";
+                }
+            }
+            return "?errorcode=0&";
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("paytran.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&lastComplaintDate=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("paytran.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&lastComplaintDate=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&lastComplaintDate=&";
+        }
+
+
+
+    }
+    public string payTranBD(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string accountNum = getParam(strParams, "accountNum");
+        string routingNum = getParam(strParams, "routing");
+        string bankAcctNum = getParam(strParams, "bankacct");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string renewalLength = getParam(strParams, "renewalLength");
+        string renewalTerm = getParam(strParams, "renewalTerm");
+        string renewalTotal = getParam(strParams, "renewalTotal");
+        string path = getParam(strParams, "logpath");
+        setLogFile(path);
+        string url = baseUrl + "paytran.html?StateInfo=" + stateInfo + "&BankNumber=" + routingNum + "&BankAccountNumber=" + bankAcctNum + "&AccountType=Checking&DonationAmount=0&TipAmount=0&RenewalLength=" + renewalLength + "&RenewalTerm=" + renewalTerm + "&TotalAmount=" + renewalTotal;
+        logIt("Try transaction paytran.html" + url);
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            //Successful payment
+            logIt("Success transaction paytran.html");
+            return "?errorcode=0&";
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("paytran.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&stateinfo=&aptNum=&housenum=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("paytran.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&stateinfo=&aptNum=&housenum=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&stateinfo=&aptNum=&housenum=&";
+        }
+
+    }
+    private string getCCType(string ccNum)
+    {
+        string pattern = @"^3[4|7]\d*";
+        string ccType = null;
+        Regex rgx = new Regex(pattern, RegexOptions.IgnoreCase);
+        Match match = rgx.Match(ccNum);
+        if (match.Success)
+        {
+            ccType = "Amex";
+        }
+        pattern = @"^6\d*";
+        rgx = new Regex(pattern, RegexOptions.IgnoreCase);
+        match = rgx.Match(ccNum);
+        if (match.Success)
+        {
+            ccType = "Discover";
+        }
+        pattern = @"^5\d*";
+        rgx = new Regex(pattern, RegexOptions.IgnoreCase);
+        match = rgx.Match(ccNum);
+        if (match.Success)
+        {
+            ccType = "MC";
+        }
+        pattern = @"^4\d*";
+        rgx = new Regex(pattern, RegexOptions.IgnoreCase);
+        match = rgx.Match(ccNum);
+        if (match.Success)
+        {
+            ccType = "Visa";
+        }
+        return ccType;
+    }
+    public string stopInfo(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string accountNum = getParam(strParams, "accountNum");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string url = baseUrl + @"stopinfo.html?StateInfo=" + stateInfo;
+        string path = getParam(strParams, "logpath");
+        setLogFile(path);
+        logIt("Start stop info " + url + " Params:" + strParams);
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            //Success return info
+            stateInfo = returnXML(results, "StateInfo");
+            string earliestStopDate = returnXML(results, "EarliestStopDate");
+            logIt("Return stop info stateinfo=" + stateInfo + " earlieststopdate=" + earliestStopDate);
+            return "?errorcode=0&earlieststopdate=" + earliestStopDate + "&stateinfo=" + stateInfo + "&";
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("stopinfo.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&lastComplaintDate=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("stopinfo.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&lastComplaintDate=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&lastComplaintDate=&";
+        }
+    }
+    public string stopTran(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string accountNum = getParam(strParams, "accountNum");
+        string stopType = getParam(strParams, "stopType");
+        string stopDate = getParam(strParams, "stopDate");
+        string restartDate = getParam(strParams, "restartDate");
+        string transactionType = getParam(strParams, "transactionType");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string donationCode = getParam(strParams, "Donation");
+        string path = getParam(strParams, "logpath");
+        string url;
+        if (donationCode != "None")
+        {
+            url = baseUrl + @"stoptran.html?StateInfo=" + stateInfo + "&AccountNumber=" + accountNum + "&StopType=" + stopType + "&StopDate=" + stopDate + "&RestartDate=" + restartDate + "&TransactionType=" + transactionType + "&DonationCode=" + donationCode;
+        }
+        else
+        {
+            url = baseUrl + @"stoptran.html?StateInfo=" + stateInfo + "&AccountNumber=" + accountNum + "&StopType=" + stopType + "&StopDate=" + stopDate + "&RestartDate=" + restartDate + "&TransactionType=" + transactionType;
+        }
+        setLogFile(path);
+        logIt("Start stop tran " + url + " Params:" + strParams);
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            string actRestart = returnXML(results, "ActualRestartDate1");
+            logIt("Stop tran success ?errorcode=0&actRestart=" + actRestart + "&");
+            return "?errorcode=0&actRestart=" + actRestart + "&";
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("stoptran.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&lastComplaintDate=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("stoptran.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&lastComplaintDate=&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            if((errorCode ==null) || (errorCode==""))
+            {
+                logIt(results);
+            }
+            logIt("dtilogin Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&lastComplaintDate=&";
+        }
+    }
+    public string servErrTran(string strParams)
+    {
+        string baseUrl = getParam(strParams, "baseURL");
+        string stateInfo = getParam(strParams, "stateInfo");
+        string accountNum = getParam(strParams, "accountNum");
+        string ANI = getParam(strParams, "ANI");
+        string indice = getParam(strParams, "indice");
+        string serviceErrorCode = getParam(strParams, "serviceErrorCode");
+        string resolutionCode = getParam(strParams, "resolutionCode");
+        string incidentDate = getParam(strParams, "incidentDate");
+        string path = getParam(strParams, "logpath");
+        if (incidentDate == "Today")
+        {
+            DateTime temp = DateTime.Now;
+            incidentDate = temp.ToString("yyyyMMdd");
+        }
+        string url = baseUrl + @"serverrtran.html?StateInfo=" + stateInfo + "&AccountNumber=" + accountNum + "&ServiceErrorCode=" + serviceErrorCode + "&ResolutionCode=" + resolutionCode + "&IncidentDate=" + incidentDate;
+        setLogFile(path);
+        logIt("Start Error tran " + url + " Params:" + strParams);
+        string results = getURL(url);
+        string returnStatus = returnXML(results, "ReturnStatus");
+        if (returnStatus == "Completed")
+        {
+            return "?errorcode=0&";
+        }
+        else if (results.Substring(0, 9) == "Error=992")
+        {
+            logIt("serverrtran.html Web Protocol Error ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=992&lastComplaintDate=&";
+        }
+        else if (results.Substring(0, 9) == "Error=999")
+        {
+            logIt("serverrtran.html Timeout ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=999&lastComplaintDate=&";
+        }
+        else if (returnXML(results, "ErrorCode") == "412")
+        {
+            //Grab delayed time by regex
+            string pattern = @".*until(.*)\.";
+            string errMsg = returnXML(results, "ErrorMsg");
+            Regex rgx = new Regex(pattern, RegexOptions.IgnoreCase);
+            string delayTime = "";
+            Match match = rgx.Match(errMsg);
+            if (match.Success)
+            {
+                delayTime = match.Groups[1].Value;
+            }
+            else
+            {
+                delayTime = "0";
+            }
+            string errorCode = returnXML(results, "ErrorCode");
+            logIt("serverrtran Webspeed Error Delivery Delayed " + results + delayTime);
+            return "?ErrorCode=" + errorCode + "&lastComplaintDate=&delayTime=" + delayTime + "&";
+        }
+        else
+        { //Failed with webspeed error
+            string errorCode = returnXML(results, "ErrorCode");
+            string errorMsg = returnXML(results, "ErrorMsg");
+            logIt("serverrtran Webspeed Error" + errorCode + " ErrorMsg=" + errorMsg + "  ANI=" + ANI + " stateinfo = " + stateInfo + " indice = " + indice + " url=" + url);
+            return "?ErrorCode=" + errorCode + "&lastComplaintDate=&";
+        }
+    }
+    public string helloWorld(string strParams)
+    {
+        string path = getParam(strParams, "logpath");
+        setLogFile(path);
+        string url = getParam(strParams, "name");
+        return "Hello " + url;
+    }
+
+    #endregion
+    #region constructors
+    public DtiParser()
+    {
+
+    }
+    #endregion
+}
+</pre>

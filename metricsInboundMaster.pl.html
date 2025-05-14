@@ -1,0 +1,168 @@
+<pre>
+sub gatherDispositionData {
+    my $repID = shift;
+    my $dids = shift;
+    my $date = shift;
+    my $db = shift;
+    my $startTime = shift;
+    my $endTime = shift;
+    my $tmpdate = $date+'1D';
+    my $nextday = isodate($tmpdate);
+    my $today = isodate($date);
+    my $beginTime = buildDateTimewithHour($date, $startTime);
+    my $lastTime =  buildDateTimewithHour($date, $endTime + 1);
+
+    # Clear out today's data
+    my $delete_dispo_query = "Delete from `TPS`.`inboundDisposition` where reportID = ? and callDate = ?";
+    my $sth_dispo_delete = $dbMySQL1->prepare($delete_dispo_query);
+    unless ($sth_dispo_delete) {
+        warn "Error preparing delete inboundDisposition: $dbMySQL1->errstr\n";
+    } else {
+        my $rows_deleted = $sth_dispo_delete->execute($repID, $today);
+        warn "Error deleting from inboundDisposition: $sth_dispo_delete->errstr\n" if $sth_dispo_delete->errstr;
+        $sth_dispo_delete->finish();
+    }
+
+    my $delete_sl_query = "Delete from `TPS`.inboundMetricsServiceLevel where reportID = ? and callDate = ?";
+    my $sth_sl_delete = $dbMySQL1->prepare($delete_sl_query);
+    unless ($sth_sl_delete) {
+        warn "Error preparing delete inboundMetricsServiceLevel: $dbMySQL1->errstr\n";
+    } else {
+        my $rows_deleted = $sth_sl_delete->execute($repID, $today);
+        warn "Error deleting from inboundMetricsServiceLevel: $sth_sl_delete->errstr\n" if $sth_sl_delete->errstr;
+        $sth_sl_delete->finish();
+    }
+
+    my $delete_callback_query = "Delete from TPS.inbCallbacks where reportID=? and reportDate = ?";
+    my $sth_callback_delete = $dbMySQL1->prepare($delete_callback_query);
+    unless ($sth_callback_delete) {
+        warn "Error preparing delete inbCallbacks: $dbMySQL1->errstr\n";
+    } else {
+        my $rows_deleted = $sth_callback_delete->execute($repID, $today);
+        warn "Error deleting from inbCallbacks: $sth_callback_delete->errstr\n" if $sth_callback_delete->errstr;
+        $sth_callback_delete->finish();
+    }
+
+    # Take care of IVR first
+    my $ivr_query = qq~
+        SELECT count(*)
+        FROM ODCalls
+        WHERE LastCampaign IN ($dids)
+          AND (LastIVR IS NOT NULL AND LastIVR != '')
+          AND LastAgent = 0
+          AND CallType = 1
+          AND Abandon = 0
+          AND ivrduration > 0
+          AND CallLocalTime < CAST(? AS DATETIME)
+          AND CallLocalTime >= CAST(? AS DATETIME)
+    ~;
+    my $dbh_ivr = $db->prepare($ivr_query);
+    my $ivr_count = 0;
+    unless ($dbh_ivr) {
+        warn "Error preparing IVR query: $db->errstr\n";
+    } else {
+        my $result = $dbh_ivr->execute($lastTime, $beginTime);
+        warn "Error executing IVR query: $dbh_ivr->errstr\n" if !$result;
+        $ivr_count = $dbh_ivr->fetchrow() if $result;
+        $dbh_ivr->finish();
+    }
+
+    my $insert_ivr_query = qq~
+        INSERT INTO `TPS`.`inboundDisposition` (
+            reportID, callDate, statusGroup, statusCode, statusDetail, `count`,
+            talkTime, wrapTime, waitTime, emails, declinedEmail, emailonFile
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ~;
+    my $sth_ivr_insert = $dbMySQL1->prepare($insert_ivr_query);
+    unless ($sth_ivr_insert) {
+        warn "Error preparing insert inboundDisposition (IVR): $dbMySQL1->errstr\n";
+    } else {
+        my $rows_inserted = $sth_ivr_insert->execute(
+            $repID, $today, IVR_STATUS_GROUP, IVR_STATUS_CODE, IVR_STATUS_DETAIL,
+            $ivr_count, 0, 0, 0, 0, 0, 0
+        );
+        warn "Error inserting inboundDisposition (IVR): $sth_ivr_insert->errstr\n" if !$rows_inserted;
+        $sth_ivr_insert->finish();
+    }
+   # Abandons
+    my $abandon_query = qq~
+        SELECT count(*)
+        FROM ODCalls
+        WHERE abandon != 0
+          AND waitduration > ?
+          AND LastCampaign IN ($dids)
+          AND CallLocalTime < CAST(? AS DATETIME)
+          AND CallLocalTime >= CAST(? AS DATETIME)
+          AND lastagent = 0
+    ~;
+    my $dbh_abandon = $db->prepare($abandon_query);
+    my $abandon_count = 0;
+    unless ($dbh_abandon) {
+        warn "Error preparing abandon query: $db->errstr\n";
+    } else {
+        my $result = $dbh_abandon->execute(ABANDON_WAIT_THRESHOLD, $lastTime, $beginTime);
+        warn "Error executing abandon query: $dbh_abandon->errstr\n" if !$result;
+        $abandon_count = $dbh_abandon->fetchrow() if $result;
+        $dbh_abandon->finish();
+    }
+    my $insert_abandon_query = qq~
+        INSERT INTO `TPS`.`inboundDisposition` (
+            reportID, callDate, statusGroup, statusCode, statusDetail, `count`,
+            talkTime, wrapTime, waitTime, emails, declinedEmail, emailonFile
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ~;
+    my $sth_abandon_insert = $dbMySQL1->prepare($insert_abandon_query);
+    unless ($sth_abandon_insert) {
+        warn "Error preparing insert inboundDisposition (Abandon): $dbMySQL1->errstr\n";
+    } else {
+        my $rows_inserted = $sth_abandon_insert->execute(
+            $repID, $today, ABANDON_STATUS_GROUP, ABANDON_STATUS_CODE, ABANDON_STATUS_DETAIL,
+            $abandon_count, 0, 0, 0, 0, 0, 0
+        );
+        warn "Error inserting inboundDisposition (Abandon): $sth_abandon_insert->errstr\n" if !$rows_inserted;
+        $sth_abandon_insert->finish();
+    }
+    # Agent Nulls
+    my $agent_null_query = qq~
+        SELECT count(*)
+        FROM ODCalls
+        WHERE LastCampaign IN ($dids)
+          AND LastAgent = 0
+          AND CallType = 1
+          AND Abandon = 0
+          AND ivrduration = 0
+          AND CallLocalTime < CAST(? AS DATETIME)
+          AND CallLocalTime >= CAST(? AS DATETIME)
+    ~;
+    my $dbh_agent_null = $db->prepare($agent_null_query);
+    my $agent_null_count = 0;
+    unless ($dbh_agent_null) {
+        warn "Error preparing agent_null query: $db->errstr\n";
+    } else {
+        my $result = $dbh_agent_null->execute($lastTime, $beginTime);
+        warn "Error executing agent_null query: $dbh_agent_null->errstr\n" if !$result;
+        $agent_null_count = $dbh_agent_null->fetchrow() if $result;
+        $dbh_agent_null->finish();
+    }
+    my $insert_agent_null_query = qq~
+        INSERT INTO `TPS`.`inboundDisposition` (
+            reportID, callDate, statusGroup, statusCode, statusDetail, `count`,
+            talkTime, wrapTime, waitTime, emails, declinedEmail, emailonFile
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ~;
+    my $sth_agent_null_insert = $dbMySQL1->prepare($insert_agent_null_query);
+    unless ($sth_agent_null_insert) {
+        warn "Error preparing insert inboundDisposition (Agent Null): $dbMySQL1->errstr\n";
+    } else {
+        my $rows_inserted = $sth_agent_null_insert->execute(
+            $repID, $today, AGENT_NULL_STATUS_GROUP, AGENT_NULL_STATUS_CODE, AGENT_NULL_STATUS_DETAIL,
+            $agent_null_count, 0, 0, 0, 0, 0, 0
+        );
+        warn "Error inserting inboundDisposition (Agent Null): $sth_agent_insert->errstr\n" if !$rows_inserted;
+        $sth_agent_null_insert->finish();
+    }
+}
+</pre>

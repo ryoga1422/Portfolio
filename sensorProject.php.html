@@ -1,0 +1,132 @@
+This code snippet demonstrates secure database connection management in PHP.  It utilizes getenv() to retrieve database credentials (username, password, host, database name) from environment variables, ensuring that sensitive information is kept outside of the codebase.  A PDO (PHP Data Objects) connection is established with these credentials, and a reusable GetSelectSql() function is provided for executing SQL SELECT queries.  Error handling is implemented using try...catch blocks to gracefully manage potential database exceptions.  This approach promotes security best practices by separating configuration from code and enhances maintainability.
+<pre>
+
+$dbUserName = getenv('DB_USER');
+$dbPassWord = getenv('DB_PASSWORD');
+$dbAddress = getenv('DB_HOST');
+$dbName = getenv('DB_NAME');
+$opt = [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES   => false,
+];
+
+function GetSelectSql($query){
+    global $dbAddress, $dbUserName, $dbPassWord,$dbName,$opt;
+    $dsn = "mysql:host=$dbAddress;dbname=$dbName;charset=utf8";
+    $pdo= new PDO($dsn,$dbUserName,$dbPassWord,$opt);
+    try{
+        $stmt = $pdo->query($query);
+        return $stmt;
+    }
+    catch(PDOException $e){
+      echo $e->getMessage();
+      return 0;
+    }
+    //use as $row=$result->fetch(PDO::FETCH_ASSOC);
+    // or foreach($result as $row)
+}
+</pre>
+PHP code for updating schedule data in a database. It handles schedule time ranges that exceed a single day by splitting them into two updates.  PDO is used to execute the SQL UPDATE queries with error handling.
+<pre>
+
+    if($endTime>1440){
+      $nextDay = $i+1;
+      if($i==6){
+        $nextDay = 0;
+      }
+      $startField2 = $days[$nextDay] . "From2";
+      $endField2 = $days[$nextDay] . "To2";
+      $endTime2 = $endTime - 1440;
+      $startTime2 = 0;
+      $query = "Update sensorProject.Client set $startField2=$startTime2, $endField2=$endTime2 where clientId = $clientId";
+      echo "$query<br>";
+      $endTime = 1440;
+      try{
+        $stmt=$pdo->prepare($query);
+        $stmt->execute();
+      }
+      catch(PDOException $e){
+        echo $e;
+        $worked = false;
+      }
+
+    }
+
+    $query = "Update sensorProject.Client set $startField=$startTime, $endField=$endTime where clientId = $clientId";
+    echo "$query<br>";
+    try{
+      $stmt=$pdo->prepare($query);
+      $stmt->execute();
+    }
+    catch(PDOException $e){
+      echo $e;
+      $worked = false;
+    }
+
+  }
+}
+</pre>
+PHP snippet to retrieve and analyze client schedule data for midnight shifts. It uses the tellMidnightShift() function within a loop to check schedule times and flags shifts that cross midnight.
+<pre>
+
+    if(!empty($_GET['clientID'])){
+        //existing record
+        $clientID=$_GET['clientID'];
+        $client=getClient($clientID);
+        //Check to see if any of the "1" blocks flip back past midnight
+        $days=['sun','mon','tues','wed','thurs','fri','sat'];
+        for($i=0;$i<7;$i++){
+            $field1 = $days[$i] . "From1";
+            echo "";
+            if(tellMidnightShift($client[$field1], $clientID)=="Fall Back"){
+                echo "";
+              //echo $days[$day] . "From2";
+              //echo $client[$days[$day] . "From2"];
+              if($client[$days[$day] . "From2"]==0){
+                //echo "zeroed out";
+                //This is a midnight shift
+                $midnightShift=true;
+              }
+            }
+        }
+    }
+?>
+</pre>
+PHP function GetSelectSql() for executing MySQL SELECT queries with PDO.  It handles database connection, query execution, and error handling.  PDO is configured with $opt for error mode and fetch mode.  Returns PDOStatement or 0 on error.
+<pre>
+
+function GetSelectSql($query){
+    global $dbAddress, $dbUserName, $dbPassWord,$dbName,$opt;
+    $dsn = "mysql:host=$dbAddress;dbname=$dbName;charset=utf8";
+    $pdo= new PDO($dsn,$dbUserName,$dbPassWord,$opt);
+    try{
+        $stmt = $pdo->query($query);
+        return $stmt;
+    }
+    catch(PDOException $e){
+      echo $e->getMessage();
+      return 0;
+    }
+    //use as $row=$result->fetch(PDO::FETCH_ASSOC);
+    // or foreach($result as $row)
+}
+?>
+</pre>
+This JavaScript snippet defines two functions for converting between "hh:mm" time format and total minutes.  timeToMins() converts a time string to minutes, and timeFromMins() converts minutes to a time string.  The timeFromMins() function ensures proper formatting with leading zeros.
+<pre>
+// Convert a time in hh:mm format to minutes
+function timeToMins(time) {
+  var b = time.split(':');
+  return b[0]*60 + +b[1];
+}
+
+// Convert minutes to a time in format hh:mm
+// Returned value is in range 00  to 24 hrs
+function timeFromMins(mins) {
+  function z(n){return (n<10? '0':'') + n;}
+  var h = (mins/60 |0) % 24;
+  var m = mins % 60;
+  return z(h) + ':' + z(m);
+}
+</pre>
