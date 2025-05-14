@@ -1,0 +1,202 @@
+<section class="section scripting-samples">
+    <h2>Scripting Sample: Automated Timesheet Processing (Perl)</h2>
+    <p>
+        This Perl script, <code>employeeTimeCards.pl</code>, was developed to automate the processing of employee timesheets.
+        It calculates employee time based on login data from call center systems, reducing manual payroll work.
+    </p>
+    <p>
+        Key functionalities include:
+    </p>
+    <ul>
+        <li>
+            Calculating rates, including handling tier assignments, overrides, and campaign-specific rates.
+        </li>
+        <li>
+            Applying training rates and generating admin pay records.
+        </li>
+        <li>
+            Managing penalty rates and creating salary records.
+        </li>
+    </ul>
+    <p>
+        <a href="#script-code" onclick="toggleScriptVisibility()">View Script Code</a>
+    </p>
+    <pre id="script-code" style="display:none; overflow-x: auto; background-color: #f4f4f4; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+        <code>
+#!/usr/bin/perl
+use strict;
+use warnings;
+use DBI;
+use MIME::Lite;
+use Date::Calc qw(Delta_Days Now Today Today_and_Now Delta_DHMS Day_of_Week);
+use Class::Date qw(:errors date localdate gmdate now -DateParse -EnvC);
+use Config::Tiny; # For reading the config file
+use Try::Tiny;    # For better error handling
+
+BEGIN { $Class::Date::WARNINGS = 0; }
+
+# Configuration File
+my $config_file = "config.ini"; # You can change the filename
+my %config = load_config($config_file);
+
+#MIME::Lite->send('smtp', $config{smtp}{server}); # SMTP server from config
+
+####################################################################################################################
+#  This does the calculate rates info
+#
+#  Here is the Order of operations for calculating rates.
+#  Each step overrides any previous steps if applicable.
+#
+#  1. Clean up ID_Tier_Working
+#   -Set ID_Tier_Working to proper value should be Previous Monday EFF_Date
+#   -Reset Tier overrides as needed and fill employee record with proper tier
+#   -Set Tier Rates from ID_Tier_Working (Pay Type 1)
+#   -Set a default rate (from SYS_Site) if Tier = 0
+#  2. Override with Pay_Override_Rate (Pay Type 1) if Pay_Override <> 0
+#  3. Override with any Campaign Specific Rates (Pay Type 1) if rate <> 0
+#  4. Apply Training Rates (Pay Type 1,9) All Type 9, override where hire_date >=Today()-[Training_Days] in SYS_Site
+#  5. Create Admin Pay Records for week (Pay Type 10)
+#   -wipe out all for week add in all for week
+#   -use default admin rate for site
+#   -apply override rate from emp table if needed
+#  . Apply Penalty Rates (Pay Type 1,2,10)
+#  . Create Salary Records (Pay Type 8) (if not already existing)
+#   -Zero out hour pay for Salary Employees!!
+#
+###################################################################################################################
+
+open my $log_fh, ">>", $config{log}{file}
+    or die "Could not open log file: $!"; # Log file from config
+select $log_fh;
+autoflush $log_fh, 1; # Flush after each write
+
+#First We Get or Set the process date
+my $temp = $ARGV[0];
+my $timeStart;
+my ($year, $month, $day, $hour, $min, $sec) = Today_and_Now();
+my $now = "$year-$month-$day $hour:$min:$sec";
+print "****Now = $year-$month-$day $hour:$min:$sec\n";
+my $today = "$year-$month-$day";  #date `date +%F`;
+print "****Today = $today\n";
+
+#Now check the database connections
+#This is the REDBULL Connetion String
+#$dbmysql = DBI->connect("DBI:mysql:dnc:",'hastur','G4nd01f');
+#This is the DRPEPPER Connection String
+my $dbTPS = connect_to_db(
+    "DBI:mysql:$config{database}{tps_name}:$config{database}{tps_host}",
+    $config{database}{tps_user},
+    $config{database}{tps_password},
+    "TPS"
+);
+my $dbMojito = connect_to_db(
+    "DBI:mysql:$config{database}{mojito_name}:$config{database}{mojito_host}",
+    $config{database}{mojito_user},
+    $config{database}{mojito_password},
+    "Mojito"
+);
+my $dbVocalcomFC = connect_to_sybase(
+    $config{database}{vocalcom_fc_dsn},
+    $config{database}{vocalcom_fc_user},
+    $config{database}{vocalcom_fc_password},
+    "VocalcomFC"
+);
+my $dbVocalcomGJ = connect_to_sybase(
+    $config{database}{vocalcom_gj_dsn},
+    $config{database}{vocalcom_gj_user},
+    $config{database}{vocalcom_gj_password},
+    "VocalcomGJ"
+);
+
+#########################################
+#HERE are some constants that can be    #
+#updated as needed                      #
+#########################################
+
+########################
+#Fill in Date Variables#
+########################
+#We need to get a $wedate and $0(Week Start Date)
+my $todaysDate = "$year-$month-$day 00:00:00";
+my $wedate = &date(&getWE_Date($today));
+my $dstart = $wedate - '6D';
+my $wedaten1 = $wedate + '1D';
+
+print "Week Beginning: $dstart - Week Ending: $wedate\n";
+
+########################################
+# Touchstar Statuses
+# 0  = "Not Logged In"
+# 1  = "Not Ready"
+# 2  = "Ready"
+# 3  = "Talking"
+# 4  = "Preview? "
+# 5  = "Hold Time? "
+# 6  = "Waiting for Call? "
+# 7  = "Wrapping"
+# 8  = "On Break"
+# 9  = "Meal"
+# 10 = "Meeting"
+# 11 = "Other"
+########################################
+my $query;
+my $squery;
+my $conn;
+my $i;
+#Retrieve all ACTIVE agents in the system; ????that are in a Status other than "NOT LOGGED IN"
+for ($i = 1; $i <= 2; $i++) {
+    if ($i == 1) {  #Vocalcom FC
+        $squery = " SELECT [OriginatorID] as id_employee, [Nom] as lastname, [Prenom] as firstName, State as status, 'V' as system"
+                . " FROM [HN_Ondata].[dbo].[ODActions] a left join"
+                . " [HN_ADMIN].[dbo].[ListAgents] l on (a.OriginatorID=l.[Ident])"
+                . " where a.ID in (select max(ID) from HN_Ondata.dbo.ODActions"
+                . " group by OriginatorID) and OriginatorID < 9000"
+                . " and State != 0 and OriginatorID not in (0)" #GJ uses 1000, 1001 for the wallboards
+                . " order by [OriginatorID]";
+        print "\nProcessing VocalcomFC";
+        $dbVocalcomFC->do("use HN_Ondata");
+        $conn = $dbVocalcomFC->prepare($squery)
+            or die "Prepare failed: " . $dbVocalcomFC->errstr();
+    } else {
+        $squery = " SELECT [OriginatorID] as id_employee, [Nom] as lastname, [Prenom] as firstName, State as status, 'V' as system"
+               . " FROM [HN_Ondata].[dbo].[ODActions] a left join"
+               . " [HN_ADMIN].[dbo].[ListAgents] l on (a.OriginatorID=l.[Ident])"
+               . " where a.ID in (select max(ID) from HN_Ondata.dbo.ODActions"
+               . " group by OriginatorID)"
+               . " and State != 0 and OriginatorID not in (0, 1000, 1001)" #GJ uses 1000, 1001 for the wallboards
+               . " order by [OriginatorID]";
+        print "\nProcessing VocalcomGJ";
+        $dbVocalcomGJ->do("use HN_Ondata");
+        $conn = $dbVocalcomGJ->prepare($squery)
+            or die "Prepare failed: " . $dbVocalcomGJ->errstr();
+    }
+    $conn->execute() or die "Execute failed: " . $conn->errstr();
+
+    ##This loops through all of the active agents
+    while (my ($ID_Employee, $Lastname, $Firstname, $Status, $system) = $conn->fetchrow()) {
+        if ($Lastname && $Firstname) {
+            #die("\n a=$ID_Employee, stat=$Status, sys=$system;\nq=$squery"); #, l=$Lastname, f=$Firstname, stat=$Status, sys=$system";
+            #Get the associated employee record for each agent
+            my $TPS;
+            #Create an employeeTimeCard record if one doesn't already exist for the day
+            #(requires one for before and after lunch)
+            if ($ID_Employee && $ID_Employee > 0) {
+                print "\n empID = $ID_Employee";
+                ($year, $month, $day, $hour, $min, $sec) = Today_and_Now();
+                $now = "$year-$month-$day $hour:$min:$sec";
+                print("**** now=$now *****\n");
+                $query = qq~SELECT id, timeIn, timeOut, totalSeconds, hourlyRate, statusID FROM `$config{database}{mojito_name}`.employeeTimeCard
+                            where ID_Employee = $ID_Employee and timeIn > '$todaysDate'~;
+                       #. " and totalSeconds < 900";  #totalSeconds < 15 minutes
+                print "\nq=$query";
+                my $mojito = $dbMojito->prepare($query)
+                    or die "Prepare failed: " . $dbMojito->errstr();
+                my $result = $mojito->execute()
+                    or die "Execute failed: " . $mojito->errstr();
+                #Handle case where Employee already has a record
+                if ($result > 0) {
+                    my ($employeeTimeCardID, $timeIn, $timeOut, $totalSeconds, $hourlyRate, $statusID) = $mojito->fetchrow();
+                    $totalSeconds = &calcSecondsBetweenDates($timeIn, $now);
+                    print "\nEmployee=$Firstname $Lastname; timeIn=$timeIn; timeOut=$timeOut; totalSeconds=$totalSeconds\n";
+                    #If agent has a employeeTimeCard record for the day but is not loggedIn then log them out
+                    if (($Status ==
