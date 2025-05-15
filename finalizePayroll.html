@@ -1,0 +1,136 @@
+<pre>
+private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
+{
+    // Define total steps for progress reporting (approximate)
+    double total = 17;
+    int prog = 0;
+
+    // Get the end-of-week (EOW) date for the current payroll period
+    string payperiod = EoW.ToString("yyyy-MM-dd");
+
+    // Calculate the start and end dates for the payroll week based on EOW
+    DateTime date1 = DataBase.getNextDay(EoW, DayOfWeek.Monday);
+    string nextMonday = date1.ToString("yyyy-MM-dd"); // Start of next week
+    date1 = DataBase.getLastDay(EoW, DayOfWeek.Monday);
+    string firstMonday = date1.ToString("yyyy-MM-dd"); // Start of current payroll week
+
+    // Define the primary payroll table being updated
+    string table = "TPS.Pay_Payroll";
+
+    // --- Payroll Finalization Steps ---
+
+    // Step 1: Clean up existing administrative hours (ID_Pay_Type = 10) for the current pay period
+    // This ensures no duplicate admin time entries before new ones are inserted.
+    string sql = $"Delete from {table} where {table}.WE_Date = @payperiod and {table}.ID_Pay_Type = 10";
+    var parameters = new Dictionary<string, object> { { "@payperiod", payperiod } };
+    DataBase._UpdateQueryWithParams(sql, parameters); // Execute parameterized DELETE query
+    prog = Convert.ToInt32(((1.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000); // Simulate work, typically for progress bar updates
+
+    // Step 2: Synchronize employee site IDs in Pay_Payroll with Emp_Table
+    // This ensures payroll records reflect the employee's current assigned site.
+    sql = $"update TPS.Pay_Payroll a inner join TPS.Emp_Table b on a.id_employee = b.id_employee set a.id_site = b.id_site where we_date = @payperiod and a.id_site != b.id_site";
+    parameters = new Dictionary<string, object> { { "@payperiod", payperiod } };
+    DataBase._UpdateQueryWithParams(sql, parameters); // Execute parameterized UPDATE query
+    prog = Convert.ToInt32(((2.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 3: Update missing campaign IDs in Pay_Admin_Login records
+    // Ensures admin logins are correctly associated with a campaign before processing.
+    sql = "update TPS.Pay_Admin_Login a inner join TPS.Emp_Table b on a.id_employee = b.id_employee set a.camp_id = b.primarycampaignid where a.Camp_ID = 0 and a.login >= date_add(now(), interval - 10 day) and a.login < date(now())";
+    DataBase.UpdateQuery(sql); // Assuming this query does not need dynamic C# variables directly.
+    prog = Convert.ToInt32(((3.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 4: Insert administrative login time into Pay_Payroll
+    // Aggregates and inserts admin time (calculated as hours) into the main payroll table.
+    sql = $"Insert into {table} (ID_Site,ID_Pay_Type,ID_Employee,hrs_login,pay_date,WE_Date,lmDate,pay_note, CAMP_ID) " +
+          "select Emp_Table.ID_site, 10 as expr1, Pay_Admin_Login.ID_Employee, " +
+          "(UNIX_TIMESTAMP(Pay_Admin_Login.logout)-UNIX_TIMESTAMP(Pay_Admin_Login.login))/3600 as expr2, " +
+          "DATE_FORMAT(Pay_Admin_Login.login,'%Y-%m-%d') as expDate, @payperiodWE as expr3,now() as expr4, " +
+          "Pay_Admin_Reasons.Description, Pay_Admin_Login.CAMP_ID from TPS.Pay_Admin_Login,TPS.Emp_Table,TPS.Pay_Admin_Reasons " +
+          "where Pay_Admin_Login.ID_Employee = Emp_Table.ID_Employee and Pay_Admin_Login.Reason = Pay_Admin_Reasons.ID_Reason " +
+          "and Pay_Admin_Login.login <= @nextMondayStart and Pay_Admin_Login.login > @firstMondayStart ";
+    parameters = new Dictionary<string, object>
+    {
+        { "@payperiodWE", payperiod },
+        { "@nextMondayStart", nextMonday + " 00:00:00" }, // Format date for database comparison
+        { "@firstMondayStart", firstMonday + " 00:00:00" }
+    };
+    DataBase._UpdateQueryWithParams(sql, parameters); // Execute parameterized INSERT query
+    prog = Convert.ToInt32(((4.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 5: Delete existing commission records for the current pay period
+    query = "Delete from TPS.Pay_Payroll where WE_Date = @payperiod and ID_Pay_Type = 13";
+    parameters = new Dictionary<string, object> { { "@payperiod", payperiod } };
+    DataBase._UpdateQueryWithParams(query, parameters);
+    prog = Convert.ToInt32(((5.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 6: Insert new commission data from Pay_Commissions
+    // Transfers processed commission data into the main payroll table.
+    query = "insert into TPS.Pay_Payroll (ID_Site,ID_Pay_Type,ID_Employee,hrs_login,pay_date,WE_Date,lmDate,rate,camp_id,currency_adj) " +
+            "SELECT ID_Site, 13 as expr1, ID_Employee, totalhours, curdate(),@payperiodWE, NOW(), rate, camp_id, `currency_adj` FROM TPS.Pay_Commissions " +
+            "WHERE EOW = @payperiodEOW";
+    parameters = new Dictionary<string, object>
+    {
+        { "@payperiodWE", payperiod },
+        { "@payperiodEOW", payperiod }
+    };
+    DataBase._UpdateQueryWithParams(query, parameters);
+    prog = Convert.ToInt32(((6.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 7: Delete existing guaranteed rate adjustments
+    query = "Delete from TPS.Pay_Payroll where WE_Date = @payperiod and ID_Pay_Type = 14";
+    parameters = new Dictionary<string, object> { { "@payperiod", payperiod } };
+    DataBase._UpdateQueryWithParams(query, parameters);
+    prog = Convert.ToInt32(((7.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 8: Insert new guaranteed rate adjustments from Pay_GuaranteedRate
+    query = "insert into TPS.Pay_Payroll (ID_Site,ID_Pay_Type,ID_Employee,hrs_login,pay_date,WE_Date,lmDate,rate,camp_id,currency_adj) " +
+            "SELECT ID_Site, 14 as expr1, ID_Employee, totalhours, curdate(),@payperiodWE, NOW(), rate, camp_id, `currency_adj` FROM TPS.Pay_GuaranteedRate " +
+            "WHERE EOW = @payperiodEOW";
+    parameters = new Dictionary<string, object>
+    {
+        { "@payperiodWE", payperiod },
+        { "@payperiodEOW", payperiod }
+    };
+    DataBase._UpdateQueryWithParams(query, parameters);
+    prog = Convert.ToInt32(((8.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 9: Remove existing currency adjustments
+    query = "Delete from TPS.Pay_Payroll where WE_Date = @payperiod and ID_Pay_Type = 15";
+    parameters = new Dictionary<string, object> { { "@payperiod", payperiod } };
+    DataBase._UpdateQueryWithParams(query, parameters);
+    prog = Convert.ToInt32(((9.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // Step 10: Insert new currency adjustments from Pay_CurrencyAdjustment
+    query = "insert into TPS.Pay_Payroll (ID_Site,ID_Pay_Type,ID_Employee,hrs_login,pay_date,WE_Date,lmDate,rate,camp_id,currency_adj) " +
+            "SELECT ID_Site, 15 as expr1, ID_Employee, totalhours, curdate(),@payperiodWE, NOW(), rate, camp_id, `currency_adj` FROM TPS.Pay_CurrenceyAdjustment " +
+            "WHERE EOW = @payperiodEOW";
+    parameters = new Dictionary<string, object>
+    {
+        { "@payperiodWE", payperiod },
+        { "@payperiodEOW", payperiod }
+    };
+    DataBase._UpdateQueryWithParams(query, parameters);
+    prog = Convert.ToInt32(((10.0 / total) * 100.0));
+    backgroundWorker1.ReportProgress(prog);
+    Thread.Sleep(1000);
+
+    // ... (rest of the DoWork method would have similar steps for other payroll elements) ...
+</pre>

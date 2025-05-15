@@ -1,0 +1,66 @@
+<pre>
+private void BBDCallHistJson(DateTime StartDate, DateTime EndDate, MySqlConnection myConn)
+{
+    logIt("Entering BBDCallHistJson");
+	//script on server that returns call history data.  
+    string url = "http://10.10.60.22/cgi-bin/BigDataCallHistory.cgi?timeZone=MST&startTime=" + StartDate.ToString("yyyy-MM-dd HH:mm:ss") + "&endTime=" + EndDate.ToString("yyyy-MM-dd HH:mm:ss") + "&pageSize=1000&page=";
+    string strSql = "";
+    int pageNum = 1;
+    bool keepGoing = true;
+    while (keepGoing)
+    {
+        try
+        {
+            logIt("URL: " + url + pageNum.ToString());
+			//set up api call
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url + pageNum.ToString());
+            request.Method = "GET";
+            request.Proxy = null; // Important for performance in some cases
+
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (Stream stream = response.GetResponseStream())
+            using (StreamReader reader = new StreamReader(stream))
+            {
+                string jsonResponse = reader.ReadToEnd();
+                logIt("JSON Response Length: " + jsonResponse.Length);
+
+                if (jsonResponse.Contains("\"total\":0")) // Check if no more data
+                {
+                    keepGoing = false;
+                    logIt("End of data reached.");
+                    break;
+                }
+				//DeserializeObject
+                RootHistory myDeserializedClass = JsonConvert.DeserializeObject<RootHistory>(jsonResponse);
+
+                if (myDeserializedClass != null && myDeserializedClass.result != null && myDeserializedClass.result._0 != null)
+                {
+                    foreach (var entry in myDeserializedClass.result._0)
+                    {
+                        _0 callRecord = entry.Value; // Access the _0 object
+						//Prep insert query to store data from CCaaS API for local use in reports
+                        strSql = "Insert into TPS.omniCallHistory (call_id, phone_number, call_type, rule_id, camp_id, call_start_time, call_duration, rule_name, tenant_id, tenant_name, access_number, caller_number, job_id, job_name, did_id, trunk_id, agt_id, acd_id, call_agent_time, call_queue_time, call_total_time, dnis, ani, transfer_type, disposition_id, disposition_details, call_status, hangup_reason, hangup_by, agent_duration, queue_name, campagin_name, trunk_name, agent_username, cg_id, cust_name, disposition_name, callback_type, transfer_id, geo_location, call_answer_time, answered_duration, recording_path, customer_pcap, agent_pcap, customer_uuid, customer_mos, agent_uuid, agent_mos)" +
+                                 " values ('" + callRecord.call_id + "','" + callRecord.phone_number + "','" + callRecord.call_type + "','" + callRecord.rule_id + "','" + callRecord.camp_id + "','" + callRecord.call_start_time + "','" + callRecord.call_duration + "','" + callRecord.rule_name + "','" + callRecord.tenant_id + "','" + callRecord.tenant_name + "','" + callRecord.access_number + "','" + callRecord.caller_number + "','" + callRecord.job_id + "','" + callRecord.job_name + "','" + callRecord.did_id + "','" + callRecord.trunk_id + "','" + callRecord.agt_id + "','" + callRecord.acd_id + "','" + callRecord.call_agent_time + "','" + callRecord.call_queue_time + "','" + callRecord.call_total_time + "','" + callRecord.dnis + "','" + callRecord.ani + "','" + callRecord.transfer_type + "','" + callRecord.disposition_id + "','" + callRecord.disposition_details + "','" + callRecord.call_status + "','" + callRecord.hangup_reason + "','" + callRecord.hangup_by + "','" + callRecord.agent_duration + "','" + callRecord.queue_name + "','" + callRecord.campagin_name + "','" + callRecord.trunk_name + "','" + callRecord.agent_username + "','" + callRecord.cg_id + "','" + callRecord.cust_name + "','" + callRecord.disposition_name + "','" + callRecord.callback_type + "','" + callRecord.transfer_id + "','" + callRecord.geo_location + "','" + callRecord.call_answer_time + "','" + callRecord.answered_duration + "','" + callRecord.recording_path + "','" + callRecord.customer_pcap + "','" + callRecord.agent_pcap + "','" + callRecord.customer_uuid + "','" + callRecord.customer_mos + "','" + callRecord.agent_uuid + "','" + callRecord.agent_mos + "')";
+
+                        MySqlCommand cmd = new MySqlCommand(strSql, myConn);
+                        cmd.ExecuteScalar(); // Execute the insert query
+                        logIt("Inserted call_id: " + callRecord.call_id);
+                    }
+                    pageNum++;
+                }
+                else
+                {
+                    keepGoing = false;
+                    logIt("No more results or invalid JSON structure.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logIt("Error in BBDCallHistJson: " + ex.Message);
+            keepGoing = false; // Stop on error
+        }
+    }
+    logIt("Exiting BBDCallHistJson");
+}
+</pre>

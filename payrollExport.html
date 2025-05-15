@@ -1,0 +1,74 @@
+
+if ((clbSites.CheckedItems.Count > 0) && (clbWeeks.CheckedItems.Count > 0))
+{
+    string table = "TPS.Pay_Payroll";
+    string sql = "Delete from TPS.payrollExportUnify"; // Clear staging table
+    DataBase.UpdateQuery(sql);
+
+    // Get selected dates
+    string sqlWeDates = "";
+    foreach (FinalizedWeek f in clbWeeks.CheckedItems)
+    {
+        if (sqlWeDates.Length > 0) { sqlWeDates += ",'" + f.ToString() + "'"; }
+        else { sqlWeDates = " ('" + f.ToString() + "'"; }
+    }
+    sqlWeDates += ") ";
+
+    // Get selected sites
+    string sqlSites = "";
+    foreach (Site s in clbSites.CheckedItems)
+    {
+        if (sqlSites.Length > 0) { sqlSites += ", " + s.Id_site.ToString(); }
+        else { sqlSites = "( " + s.Id_site.ToString(); }
+    }
+    sqlSites += ")";
+
+    DataTable dtPayTypes = DataBase.getADataTable("Select unifyPayCode, export_description from TPS.Pay_Pay_Type where export_type>0 group by unifyPayCode");
+    foreach (DataRow payTypes in dtPayTypes.Rows)
+    {
+        string insertStatement = "insert into TPS.payrollExportUnify (emplNum,`name`,earningsCode,rate,hours,amount) ";
+        string select;
+        if(payTypes["unifyPayCode"].ToString()=="07"){
+            select = "Select b.ID_Employee,concat(b.l_name, ', ', b.f_name), '" + payTypes["unifyPayCode"] + "', 0,0,sum(a.`currency_adj`) from " + table + " a inner join TPS.Emp_Table b on a.ID_Employee = b.ID_Employee inner join TPS.Pay_Pay_Type c on a.ID_Pay_Type = c.ID_Pay_Type " +
+                " where a.WE_Date in  " + sqlWeDates + "  and a.ID_SITE in " + sqlSites + " and c.unifyPayCode = '" + payTypes["unifyPayCode"] + "' and a.ID_Payroll not in (select a.ID_Payroll from TPS.Pay_Payroll a inner join TPS.PayApplyGaruanteedRate b on a.ID_Employee = b.ID_Employee and b.weDate=a.WE_Date " +
+                " where b.weDate in " + sqlWeDates + " and b.Active = 1 and a.ID_Pay_Type in (13,14)) group by b.ID_Employee, concat(b.l_name, ', ', b.f_name)";
+        } else if (payTypes["export_description"].ToString() == "Export Hourly") {
+            select = "Select b.ID_Employee,concat(b.l_name, ', ', b.f_name), '" + payTypes["unifyPayCode"] + "', a.rate,sum(a.hrs_login),sum(a.`currency_adj`) from " + table + " a inner join TPS.Emp_Table b on a.ID_Employee = b.ID_Employee inner join TPS.Pay_Pay_Type c on a.ID_Pay_Type = c.ID_Pay_Type" +
+                     " where a.rate > 0 and a.WE_Date in " + sqlWeDates + " and a.ID_SITE in " + sqlSites + " and c.unifyPayCode = '" + payTypes["unifyPayCode"] + "' group by b.ID_Employee, concat(b.l_name, ', ', b.f_name), a.rate";
+        } else {
+            select = "Select b.ID_Employee,concat(b.l_name, ', ', b.f_name), '" + payTypes["unifyPayCode"] + "', a.rate,sum(a.hrs_login),sum(a.`currency_adj`) from " + table + " a inner join TPS.Emp_Table b on a.ID_Employee = b.ID_Employee inner join TPS.Pay_Pay_Type c on a.ID_Pay_Type = c.ID_Pay_Type" +
+                     " where a.WE_Date in " + sqlWeDates + " and a.ID_SITE in " + sqlSites + " and c.unifyPayCode = '" + payTypes["unifyPayCode"] + "' group by b.ID_Employee, concat(b.l_name, ', ', b.f_name)";
+        }
+        DataBase.UpdateQuery(insertStatement + select);
+    }
+
+    // Write to CSV file
+    string filename = sfd1.FileName;
+    if (filename.Substring((filename.Length - 4)) != ".csv")
+    {
+        filename += ".csv";
+    }
+    using (StreamWriter writer = new StreamWriter(filename))
+    {
+        DataTable dt = DataBase.getADataTable("SELECT * FROM `TPS`.`payrollExportUnify`");
+        string row = "\"Co Code\",\"Batch ID\",\"File #\",\"Tax Frequency\",\"Temp Dept\",\"Temp Rate\",\"Reg Hours\",\"O/T Hours\",\"Hours 3 Code\",\"Hours 3 Amount\",\"Hours 3 Code\",\"Hours 3 Amount\",\"Hours 3 Code\",\"Hours 3 Amount\",\"Hours 3 Code\",\"Hours 3 Amount\",\"Earnings 3 Code\",\"Earnings 3 Amount\",\"Earnings 3 Code\",\"Earnings 3 Amount\",\"Earnings 3 Code\",\"Earnings 3 Amount\",\"Earnings 3 Code\",\"Earnings 3 Amount\",\"Repl Ded Code\",\"Repl Ded Amount\"";
+        writer.WriteLine(row);
+        foreach (DataRow r in dt.Rows)
+        {
+            row = "";
+            foreach (var item in r.ItemArray)
+            {
+                if ((item.ToString() != "0")&& (item.ToString() != "0.00"))
+                {
+                    row += "\"" + item + "\",";
+                }
+                else
+                {
+                    row += "\"\",";
+                }
+            }
+            writer.WriteLine(row);
+        }
+    }
+    MessageBox.Show("Export Complete");
+}

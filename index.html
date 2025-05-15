@@ -136,6 +136,64 @@
         .scripting-samples a:hover {
             text-decoration: underline;
         }
+		/* The Modal (background) */
+		.modal {
+			display: none; /* Hidden by default */
+			position: fixed; /* Stay in place */
+			z-index: 1000; /* Sit on top */
+			left: 0;
+			top: 0;
+			width: 100%; /* Full width */
+			height: 100%; /* Full height */
+			overflow: auto; /* Enable scroll if needed */
+			background-color: rgba(0,0,0,0.7); /* Black w/ opacity */
+			justify-content: center; /* Center horizontally */
+			align-items: center; /* Center vertically */
+		}
+
+		/* Modal Content/Box */
+		.modal-content {
+			background-color: #fefefe;
+			margin: auto; /* Center the box */
+			padding: 20px;
+			border: 1px solid #888;
+			width: 80%; /* Could be responsive */
+			max-width: 600px; /* Max width */
+			box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2),0 6px 20px 0 rgba(0,0,0,0.19);
+			animation-name: animatetop;
+			animation-duration: 0.4s;
+			border-radius: 8px;
+			position: relative; /* For close button positioning */
+		}
+
+		/* The Close Button */
+		.close-button {
+			color: #aaa;
+			float: right;
+			font-size: 28px;
+			font-weight: bold;
+			position: absolute;
+			top: 10px;
+			right: 20px;
+		}
+
+		.close-button:hover,
+		.close-button:focus {
+			color: black;
+			text-decoration: none;
+			cursor: pointer;
+		}
+
+		/* Add Animation (Optional) */
+		@-webkit-keyframes animatetop {
+			from {top:-300px; opacity:0}
+			to {top:0; opacity:1}
+		}
+
+		@keyframes animatetop {
+			from {top:-300px; opacity:0}
+			to {top:0; opacity:1}
+		}
     </style>
 	<script>
 		function toggleScriptVisibility(clickedLink) {
@@ -177,6 +235,24 @@
 				hideLink.style.display = 'none';
 			}
 		}
+		function openModal(modalId, event) {
+			event.preventDefault(); // Prevent default link behavior
+			document.getElementById(modalId).style.display = "flex"; // Use flex to center
+		}
+
+		function closeModal(modalId) {
+			document.getElementById(modalId).style.display = "none";
+		}
+
+		// Optional: Close modal if clicking outside the content
+		window.onclick = function(event) {
+			var modals = document.getElementsByClassName('modal');
+			for (var i = 0; i < modals.length; i++) {
+				if (event.target == modals[i]) {
+					modals[i].style.display = "none";
+				}
+			}
+		}
 
 	</script>
 </head>
@@ -196,13 +272,92 @@
         <section class="section expertise">
             <h2>Areas of Expertise</h2>
             <ul>
-                <li>IT Strategy & Leadership</li>
-                <li>Contact Center Infrastructure</li>
-                <li>C# Development & API Integrations</li>
-                <li>IVR & Telephony Systems</li>
+				<li><a href="#" onclick="openModal('itStrategyModal', event)">IT Strategy & Leadership</a></li>
+				<li><a href="#" onclick="openModal('contactCenterModal', event)">Systems & Network Architecture</a></li>
+				<li><a href="#" onclick="openModal('csharpDevModal', event)">C# Development & API Integrations</a></li>
+				<li><a href="#" onclick="openModal('ivrTelephonyModal', event)">IVR & Telephony Systems</a></li>
             </ul>
         </section>
+		<div id="itStrategyModal" class="modal">
+			<div class="modal-content">
+				<span class="close-button" onclick="closeModal('itStrategyModal')">&times;</span>
+				<h3>IT Strategy & Leadership</h3>
+				<p> As a Chief Technology Officer, I possess extensive experience in directing all key facets of information technology operations, with a primary aim of driving bottom-line success and improving technical efficiency.  My expertise lies in steering operational strategies and IT innovations to achieve organizational success, consistently delivering exceptional outcomes through digital transformation and the alignment of technology initiatives with broader business strategy.<br><br>
+ A core aspect of my leadership involves enhancing efficiency and profitability through strategic planning and international expansion.  A prime example of this is directing the establishment of a new division in Mexico  , a strategic move that achieved a 25% reduction in operational expenses by replacing less efficient outsourcing models   and delivered 50% cost savings compared to U.S. operations.<br><br>
+ I have a proven track record in balancing strategic IT leadership with operational initiatives, as demonstrated by my dual roles as Director of IT and head of new operational initiatives during a period of international expansion.  This included negotiating high-value contracts with favorable terms, which significantly improved service margins and strengthened vendor/client partnerships.<br><br>
+ Furthermore, my leadership extends to ensuring business continuity through the implementation of disaster recovery solutions.  I have a remarkable acumen in scaling enterprise technology and building resilient networks for multi-site and international call centers.  I am a transformational leader, skilled in leading cross-functional teams and fostering a culture of innovation and continuous improvement within technology departments.</p>
+			</div>
+		</div>
 
+		<div id="contactCenterModal" class="modal">
+			<div class="modal-content">
+				<span class="close-button" onclick="closeModal('contactCenterModal')">&times;</span>
+				<h3>Systems & Network Architecture</h3>
+				<p>
+					I possess remarkable acumen in designing, building, and scaling robust enterprise technology and network infrastructures across diverse environments. My expertise extends to both greenfield implementations and critical migration projects.
+				</p>
+				<p>
+					Key accomplishments include:
+					<ul>
+						 <li>Leading and executing three full IT buildouts for new offices, encompassing secure network design, system architecture, and physical security, all delivered within budget.</li>
+						<li>Planning and overseeing two significant data center migrations, ensuring seamless transition and minimal downtime for critical operations.</li>
+						 <li>Designing and administering hybrid Linux/Windows environments that supported databases (SQL, MySQL), web services (Apache, IIS), VoIP systems, and firewalls.</li>
+						 <li>Maintaining secure, uninterrupted connectivity across all business sites by managing network devices such as Juniper and Sophos, along with four routers and over 20 site-to-site VPN tunnels. My experience also includes limited exposure to Cisco and Fortinet technologies.</li>
+						 <li>Building resilient networks and designing systems for multi-site and international call centers, supporting continuous IT services for hundreds of employees across multiple locations.</li>
+						 <li>Minimizing downtime and strengthening business continuity via implementation of disaster recovery plans with redundant server infrastructure and instant failover between sites.</li>
+					</ul>
+				</p>
+			</div>
+		</div>
+		
+		<div id="csharpDevModal" class="modal">
+			<div class="modal-content">
+				<span class="close-button" onclick="closeModal('csharpDevModal')">&times;</span>
+				<h3>C# Development & API Integrations</h3>
+				<p>
+					As a seasoned developer and project leader, I bring comprehensive expertise in software development, focusing on robust API integrations and custom application delivery. I have a strong command of multiple programming languages, enabling me to tackle diverse technical challenges and lead projects from conception to deployment.
+				</p>
+				<p>
+					My proficiency extends across various programming paradigms and includes experience with:
+					<ul>
+						<li><strong>Core Languages:</strong> C#, Perl, Java, Python, PowerShell, C++, PHP.</li>
+						<li><strong>Software Development Tools:</strong> Visual Studio.</li>
+						<li><strong>Database Technologies:</strong> SQL, Relational Database Design and Administration.</li>
+					</ul>
+				</p>
+				<p>
+					I have served as both a project manager and lead developer on critical initiatives, including:
+					<ul>
+						<li>Designing and integrating complex IVR (Interactive Voice Response) and CRM (Customer Relationship Management) solutions, streamlining customer interactions and data management.</li>
+						<li>Developing impactful web applications, creating user-friendly interfaces and robust backend systems to meet specific business needs.</li>
+						<li>Implementing a unique elder care solution that leveraged various sensors (motion, pressure pads, door, and window) to enhance safety and monitoring.</li>
+						<li>Creating automated reporting tools that generated hundreds of reports daily using various scripting languages, enabling data-driven decision-making for leadership and clients.</li>
+						<li>Automating timesheet processing based on call center system login data, saving 20 hours of manual payroll work per week.</li>
+						<li>Developing tools to automatically monitor and report on employee performance, reclaiming 10 hours of weekly supervisor time.</li>
+					</ul>
+				</p>
+			</div>
+		</div>
+				
+		<div id="ivrTelephonyModal" class="modal">
+			<div class="modal-content">
+				<span class="close-button" onclick="closeModal('ivrTelephonyModal')">&times;</span>
+				<h3>IVR & Telephony Systems</h3>
+				<p>
+					I possess deep expertise in the architecture, implementation, and optimization of complex Interactive Voice Response (IVR) and telephony systems. My background spans both traditional and modern communication platforms, ensuring seamless and efficient customer and internal communications.
+				</p>
+				<p>
+					Key areas of proficiency include:
+					<ul>
+						<li><strong>System Design & Integration:</strong> Proficient in telephony systems integration, including IVR and workforce platforms, and designing robust VoIP systems for multi-site and international call centers.</li>
+						<li><strong>Troubleshooting & Connectivity:</strong> Expert in diagnosing and resolving issues across various telephony technologies, including SIP (Session Initiation Protocol), T1 lines, and POTS (Plain Old Telephone Service), ensuring continuous service availability.</li>
+						<li><strong>Vendor Management:</strong> Experienced in collaborating and negotiating with long-distance and telephony vendors, optimizing service agreements and ensuring cost-effective communication solutions.</li>
+						<li><strong>CCaaS Platforms:</strong> Practical experience with Contact Center as a Service (CCaaS) solutions, leveraging cloud-based technologies to enhance contact center flexibility and scalability.</li>
+						<li><strong>System Administration:</strong> Administering hybrid Linux/Windows environments that support VoIP systems, guaranteeing optimal performance and reliability.</li>
+					</ul>
+				</p>
+			</div>
+		</div>
         <section class="section technical-skills">
             <h2>Technical Proficiencies</h2>
             <ul>
@@ -427,6 +582,90 @@
 						var scriptCode = document.getElementById('script-code-csharp2');
 						var hideLink = document.getElementById('hide-link-csharp2');
 						var viewLink = document.getElementById('view-link-csharp2');
+
+						if (scriptCode.style.display === 'none') {
+							scriptCode.style.display = 'block';
+							hideLink.style.display = 'block';
+						} else {
+							scriptCode.style.display = 'none';
+							hideLink.style.display = 'none';
+						}
+					}
+					</script>
+					<li>
+						<h3>C# Project Snippet: Payroll</h3>
+						<p>
+							This C# code snippet provides the foundational logic for calculating diverse payroll components, including hourly wages, salaries, bonuses, and commissions. A core feature is its ability to meticulously attribute each payroll expense to specific projects or campaigns, enabling crucial financial analysis by directly comparing expenses against revenue for optimized project profitability.
+						</p>
+						<p>
+							<a id="view-link-csharp3" href="#script-code-csharp" onclick="toggleScriptVisibilityCSharp3(this)">View Script Code Snippet</a>
+						<pre id="script-code-csharp3" style="display:none; overflow-x: auto; background-color: #f4f4f4; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+<object data="finalizePayroll.html" type="text/html" width="100%" height="500px"></object>
+							</pre>
+						<p id="hide-link-csharp3" style="display:none;">
+							<a href="#script-code-csharp3" onclick="toggleScriptVisibilityCSharp3(this)">Hide Script Code</a>
+						</p>
+						<p>
+							This snippet showcases the critical functionality of exporting finalized payroll records for seamless integration with external third-party processors. It demonstrates proven expertise in developing robust data export routines, having successfully implemented integrations for leading systems such as Unify Payroll and ADP. This ensures accurate and timely data transfer for external processing.
+						</p>
+						<p>
+							<a id="view-link-csharp4" href="#script-code-csharp" onclick="toggleScriptVisibilityCSharp4(this)">View Script Code Snippet</a>
+						<pre id="script-code-csharp4" style="display:none; overflow-x: auto; background-color: #f4f4f4; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+<object data="payrollExport.html" type="text/html" width="100%" height="500px"></object>
+							</pre>
+						<p id="hide-link-csharp4" style="display:none;">
+							<a href="#script-code-csharp4" onclick="toggleScriptVisibilityCSharp4(this)">Hide Script Code</a>
+						</p>
+					</li>
+
+					<script>
+					function toggleScriptVisibilityCSharp3(clickedLink) {
+						var scriptCode = document.getElementById('script-code-csharp3');
+						var hideLink = document.getElementById('hide-link-csharp3');
+						var viewLink = document.getElementById('view-link-csharp3');
+
+						if (scriptCode.style.display === 'none') {
+							scriptCode.style.display = 'block';
+							hideLink.style.display = 'block';
+						} else {
+							scriptCode.style.display = 'none';
+							hideLink.style.display = 'none';
+						}
+					}function toggleScriptVisibilityCSharp4(clickedLink) {
+						var scriptCode = document.getElementById('script-code-csharp4');
+						var hideLink = document.getElementById('hide-link-csharp4');
+						var viewLink = document.getElementById('view-link-csharp4');
+
+						if (scriptCode.style.display === 'none') {
+							scriptCode.style.display = 'block';
+							hideLink.style.display = 'block';
+						} else {
+							scriptCode.style.display = 'none';
+							hideLink.style.display = 'none';
+						}
+					}
+					</script>
+					<li>
+						<h3>C# Project Snippet: Retrieve Call History from CCaaS</h3>
+						<p>
+							This snippet is part of a C# console application designed to retrieve call history records from a Contact Center as a Service (CCaaS) platform's API. The data is then stored in a local MySQL database for custom reporting and analytics. This demonstrates proficiency in consuming RESTful APIs, parsing JSON responses, and integrating with a relational database.
+						</p>
+						
+						<p>
+							<a id="view-link-csharp5" href="#script-code-csharp" onclick="toggleScriptVisibilityCSharp5(this)">View Script Code Snippet</a>
+						<pre id="script-code-csharp5" style="display:none; overflow-x: auto; background-color: #f4f4f4; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+<object data="jsonHandling.html" type="text/html" width="100%" height="500px"></object>
+							</pre>
+						<p id="hide-link-csharp5" style="display:none;">
+							<a href="#script-code-csharp5" onclick="toggleScriptVisibilityCSharp5(this)">Hide Script Code</a>
+						</p>
+					</li>
+
+					<script>
+					function toggleScriptVisibilityCSharp5(clickedLink) {
+						var scriptCode = document.getElementById('script-code-csharp5');
+						var hideLink = document.getElementById('hide-link-csharp5');
+						var viewLink = document.getElementById('view-link-csharp5');
 
 						if (scriptCode.style.display === 'none') {
 							scriptCode.style.display = 'block';
